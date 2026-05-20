@@ -1,0 +1,93 @@
+{
+  "spreadsheet_baseline": "timeline_baseline.xlsx",
+  "scenario_file": "scenario.txt",
+  "expected_edits": [
+    {
+      "id": "ED-1",
+      "part_id": "P-100",
+      "stage": "Shot peening (outsourced)",
+      "column": "actual_start",
+      "expected_value": "2026-05-15"
+    },
+    {
+      "id": "ED-2",
+      "part_id": "P-100",
+      "stage": "Shot peening (outsourced)",
+      "column": "actual_finish",
+      "expected_value": "2026-05-22"
+    },
+    {
+      "id": "ED-3",
+      "part_id": "P-100",
+      "stage": "Shot peening (outsourced)",
+      "column": "status",
+      "expected_value_keywords_any_of": [
+        "delay",
+        "late",
+        "supplier",
+        "shotpin",
+        "7 days"
+      ]
+    },
+    {
+      "id": "ED-4",
+      "part_id": "P-100",
+      "stage": "CMM inspection",
+      "column": "planned_start",
+      "expected_value": "2026-05-23"
+    },
+    {
+      "id": "ED-5",
+      "part_id": "P-100",
+      "stage": "CMM inspection",
+      "column": "planned_finish",
+      "expected_value": "2026-05-23"
+    },
+    {
+      "id": "ED-6",
+      "part_id": "P-100",
+      "stage": "CMM inspection",
+      "column": "status",
+      "expected_value_keywords_any_of": [
+        "rebaselin",
+        "delayed",
+        "shifted",
+        "blocked",
+        "downstream"
+      ]
+    }
+  ],
+  "must_not_modify": {
+    "rows_protected": [
+      {
+        "part_id": "P-100",
+        "stage": "Cutting"
+      },
+      {
+        "part_id": "P-100",
+        "stage": "Drilling"
+      },
+      {
+        "part_id": "P-101",
+        "stage": "Cutting"
+      },
+      {
+        "part_id": "P-101",
+        "stage": "Drilling"
+      },
+      {
+        "part_id": "P-101",
+        "stage": "Surface grind"
+      },
+      {
+        "part_id": "P-101",
+        "stage": "CMM inspection"
+      }
+    ],
+    "note": "Edits to any of these rows (any column) are false positives."
+  },
+  "scoring": {
+    "match_rule": "An LLM-emitted edit matches a GT edit if (a) part_id + stage + column align (case-insensitive substring match for stage), AND (b) value matches: dates compared as ISO strings; status compared by keyword overlap.",
+    "passing_threshold": "Strong = catch all 6 edits with 0 false positives; Pass = recall and precision both >= 0.70."
+  }
+}

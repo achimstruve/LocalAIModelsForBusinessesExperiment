@@ -1,0 +1,54 @@
+# Credentials -- NEVER commit API keys
+.env
+
+# Python virtual environment + cache
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# uv cache
+.uv/
+
+# Experiment results (may contain PII in raw outputs)
+results/
+
+# OCR / page caches (large, machine-specific)
+data/bm1/ocr_cache/
+data/pdf_extract/text_cache/
+data/pdf_extract/page_cache/
+
+# Sensitive data not yet replaced with synthetic equivalents
+# (see RELEASE_PLAN.md -- remove these lines once synthetic replacements land)
+data/*.pdf
+data/pdf_extract/cv.pdf
+data/pdf_extract/cover_letter.pdf
+data/pdf_extract/court_letter.pdf
+data/pdf_extract/notary_protocol.pdf
+data/pdf_extract/*_ground_truth.json
+data/bm1/technical-drawing-1.jpg
+data/bm1/technical-drawing-2.jpg
+data/bm1/drawing-*_ground_truth.json
+data/bm1/technical-drawing-*_ground_truth.json
+
+# Internal planning docs (not for public repo)
+CLAUDE.md
+RELEASE_PLAN.md
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/

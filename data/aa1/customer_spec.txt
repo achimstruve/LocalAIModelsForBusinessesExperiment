@@ -1,0 +1,64 @@
+CUSTOMER MATERIAL SPECIFICATION
+================================
+
+Document ref: SPEC-TC-2026-0042
+Issued by:    [Customer A]
+Issue date:   2026-01-15
+Revision:     C
+For part:     P/N TC-Bearing-Race-1107
+
+This specification governs the material acceptance criteria for the part referenced above.
+All material certificates from suppliers must be cross-checked against the values below
+prior to part release. Any deviation must be flagged and discussed with the customer
+before processing the material into production.
+
+MATERIAL DESIGNATION
+--------------------
+Material:                 AISI 316L stainless steel
+Standard reference:       ASTM A276 / ASTM A479
+Heat treatment condition: Solution annealed
+
+MECHANICAL REQUIREMENTS (at room temperature)
+---------------------------------------------
+Tensile strength, min:    485 MPa
+Yield strength (0.2%), min: 170 MPa
+Elongation at break, min: 40%
+Hardness, max:            HB 217
+
+THERMAL TREATMENT REQUIREMENTS
+------------------------------
+Solution annealing temperature range: 1040 to 1100 degrees C
+Quench: rapid water quench mandatory
+Cooling rate, min: 50 K/sec from solution temperature
+
+CHEMICAL COMPOSITION (mass percent)
+-----------------------------------
+Carbon (C), max:      0.030 %
+Manganese (Mn), max:  2.00 %
+Phosphorus (P), max:  0.045 %
+Sulfur (S), max:      0.030 %
+Silicon (Si), max:    1.00 %
+Chromium (Cr):        16.0 to 18.0 %
+Nickel (Ni):          10.0 to 14.0 %
+Molybdenum (Mo):      2.00 to 3.00 %
+Nitrogen (N), max:    0.10 %
+
+SURFACE FINISH REQUIREMENTS
+---------------------------
+Surface roughness Ra, max:  0.8 micrometres
+Visual inspection:          No visible cracks, inclusions, or surface defects
+                            permitted
+
+DIMENSIONAL TRACEABILITY
+------------------------
+Heat number traceability:  Mandatory on all certificates
+Mill source identification: Required (mill name + location)
+Test report scope:         Per-heat results, signed by mill metallurgist
+
+ADDITIONAL REQUIREMENTS
+-----------------------
+Magnetic permeability, max: 1.05 (austenitic condition)
+Intergranular corrosion test: ASTM A262 Practice E pass required
+Charpy impact at -196 deg C, min: 60 J (3-specimen average)
+
+END OF SPECIFICATION

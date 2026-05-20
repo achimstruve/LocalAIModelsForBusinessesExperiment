@@ -1,0 +1,28 @@
+TODAY'S DATE: 2026-05-15
+
+SCHEDULING UPDATE FROM SUPPLIER:
+ShotpinHU GmbH, our outsourced shot-peening supplier in Hungary, has just notified us by email
+that they were unable to start P-100 'Shot peening (outsourced)' on the planned date 2026-05-08.
+They started the job today (2026-05-15) — exactly 7 days late — and they expect to finish in
+their normal turnaround of 7 days, i.e. the actual finish will be 2026-05-22.
+
+YOUR TASK:
+Update the project timeline spreadsheet to reflect this. Specifically:
+
+1. For the row (part_id=P-100, stage='Shot peening (outsourced)'):
+   - record actual_start = 2026-05-15
+   - record actual_finish = 2026-05-22
+   - update status to indicate the supplier delay (use a short, action-oriented status string)
+
+2. Propagate the cascade. The downstream stage (P-100, 'CMM inspection') was planned for
+   2026-05-16. With shot peening now finishing 2026-05-22, CMM inspection cannot start until
+   the day after — 2026-05-23.
+   - update planned_start to 2026-05-23
+   - update planned_finish to 2026-05-23
+   - update status to indicate the rebaseline (use a short status string)
+
+3. The other parts in the spreadsheet (P-101 and its stages) are NOT affected and must remain
+   unchanged.
+
+Do NOT modify any other cells. Output only the structured edit list as instructed by the system
+prompt — no narration, no apology, no commentary on the input data.

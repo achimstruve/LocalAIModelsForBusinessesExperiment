@@ -1,0 +1,65 @@
+MATERIAL TEST CERTIFICATE / CERTIFICATE OF CONFORMITY
+======================================================
+
+Issued by:        [Supplier B], titanium and stainless mill
+Mill location:    Northern Italy, EU
+Certificate ref:  CERT-2026-04-3318
+Issue date:       2026-04-22
+Heat number:      H-2025-44912
+For customer:     [End customer code TC-44]
+Order reference:  PO-1107-A
+Standard:         ASTM A276 (with mill internal extensions)
+
+The undersigned mill metallurgist certifies that the material described below
+was produced and tested in accordance with the standards referenced above.
+
+MATERIAL
+--------
+Designation:      AISI 316L stainless steel
+Form supplied:    Round bar, 65 mm diameter, 6 m length
+Heat treatment:   Solution annealed at 1060 deg C, water-quenched
+
+MECHANICAL TEST RESULTS (room temperature, 3-specimen average)
+--------------------------------------------------------------
+Tensile strength: 510 MPa
+Yield strength (0.2 percent offset): 160 MPa
+Elongation at break: 42 percent
+Hardness: HB 195
+
+THERMAL PROCESSING DATA
+-----------------------
+Solution annealing temperature: 1060 deg C
+Cooling method:                 Water quench
+Measured cooling rate:          ~58 K per sec from solution temperature
+
+CHEMICAL COMPOSITION (mass percent, ladle analysis)
+---------------------------------------------------
+Carbon:      0.025
+Manganese:   1.74
+Phosphorus:  0.028
+Sulfur:      0.022
+Silicon:     0.46
+Chromium:    16.8
+Nickel:      11.2
+Molybdenum:  2.42
+Nitrogen:    0.08
+
+SURFACE / VISUAL
+----------------
+Surface finish (Ra, measured at 6 locations):  0.95 micrometres average
+Visual inspection: passed; no surface defects observed
+
+ADDITIONAL TESTING
+------------------
+Magnetic permeability:           1.03
+Intergranular corrosion (ASTM A262 Practice E): test not performed
+Charpy impact at -196 deg C:     54 J (3-specimen average)
+
+TRACEABILITY
+------------
+Heat number recorded on certificate: H-2025-44912
+Mill source: identified above
+Metallurgist signature: present (page 2)
+
+Certified by: F. Bianchi, Mill Metallurgist
+Page 1 of 2

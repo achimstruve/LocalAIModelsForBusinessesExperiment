@@ -1,0 +1,26 @@
+dim_id,feature,model_value
+D001,Outer diameter at flange,65.002
+D002,Inner bore diameter,42.510
+D003,Bearing seat diameter,28.001
+D004,Total length,180.150
+D005,Step length L1,45.005
+D006,Step length L2,38.025
+D007,Chamfer 1 angle,30.040
+D008,Chamfer 1 length,2.012
+D009,Fillet radius R1,1.508
+D010,Fillet radius R2,0.795
+D011,Hole diameter (4x),8.005
+D012,Hole circle PCD,52.030
+D013,Hole position angle,89.985
+D014,Groove width,3.020
+D015,Groove depth,1.498
+D016,Surface A flatness,0.019
+D017,Concentricity bore-to-OD,0.024
+D018,Runout (TIR),0.029
+D019,"Wall thickness, min",3.420
+D020,Through-hole diameter,6.001
+D021,Counterbore diameter,12.001
+D022,Counterbore depth,4.012
+D023,Reference distance ref-A to ref-B,25.004
+D024,Lead-in chamfer length,0.510
+D025,Surface finish reference Ra (note),N/A — not extractable from 3D model

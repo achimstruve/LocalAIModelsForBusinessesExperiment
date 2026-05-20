@@ -1,0 +1,26 @@
+dim_id,feature,nominal_value,tolerance_plus,tolerance_minus
+D001,Outer diameter at flange,65.000,+0.050,-0.050
+D002,Inner bore diameter,42.500,+0.025,-0.025
+D003,Bearing seat diameter,28.000,+0.020,-0.020
+D004,Total length,180.000,+0.200,-0.200
+D005,Step length L1,45.000,+0.100,-0.100
+D006,Step length L2,38.000,+0.100,-0.100
+D007,Chamfer 1 angle,30.000,+0.500,-0.500
+D008,Chamfer 1 length,2.000,+0.050,-0.050
+D009,Fillet radius R1,1.500,+0.100,-0.100
+D010,Fillet radius R2,0.800,+0.050,-0.050
+D011,Hole diameter (4x),8.000,+0.030,-0.030
+D012,Hole circle PCD,52.000,+0.050,-0.050
+D013,Hole position angle,90.000,+0.100,-0.100
+D014,Groove width,3.000,+0.030,-0.030
+D015,Groove depth,1.500,+0.050,-0.050
+D016,Surface A flatness,0.020,+0.000,-0.020
+D017,Concentricity bore-to-OD,0.025,+0.000,-0.025
+D018,Runout (TIR),0.030,+0.000,-0.030
+D019,"Wall thickness, min",3.500,+0.100,-0.100
+D020,Through-hole diameter,6.000,+0.020,-0.020
+D021,Counterbore diameter,12.000,+0.030,-0.030
+D022,Counterbore depth,4.000,+0.050,-0.050
+D023,Reference distance ref-A to ref-B,25.000,+0.030,-0.030
+D024,Lead-in chamfer length,0.500,+0.025,-0.025
+D025,Surface finish reference Ra (note),Ra <= 0.8 um (note on drawing),,

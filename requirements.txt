@@ -1,0 +1,4 @@
+# DEPRECATED: this file is no longer used. Dependencies live in pyproject.toml.
+# Setup: `uv sync`
+# Run:   `uv run python run_experiment.py`
+# You can safely delete this file.

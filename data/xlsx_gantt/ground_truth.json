@@ -1,0 +1,100 @@
+{
+  "spreadsheet": "timeline.xlsx",
+  "scenario": "Synthetic Turbocam ZK.1 project timeline with 4 deliberately-injected scheduling issues. The LLM should review the timeline and flag every issue as an actionable concern for Lorant (the day-to-day scheduler).",
+  "expected_issues": [
+    {
+      "id": "ISS-1",
+      "kind": "supplier_delay_cascade",
+      "summary": "P-002 outsourced shot peening is 7 days late (ShotpinHU GmbH). The downstream CMM inspection for P-002 is blocked.",
+      "must_be_flagged": true,
+      "involved_parts": [
+        "P-002"
+      ],
+      "involved_stages": [
+        "Shot peening (outsourced)",
+        "CMM inspection"
+      ],
+      "match_keywords_any_of": [
+        "P-002",
+        "shot peening",
+        "shotpinhu",
+        "supplier",
+        "7 days",
+        "blocked",
+        "cascade"
+      ]
+    },
+    {
+      "id": "ISS-2",
+      "kind": "machine_conflict",
+      "summary": "P-004 Drilling on M-Mill-B is planned 2026-05-08 to 2026-05-09; P-003 Drilling on the same machine occupies it until 2026-05-09 \u2014 there is at least one day of overlap.",
+      "must_be_flagged": true,
+      "involved_parts": [
+        "P-003",
+        "P-004"
+      ],
+      "involved_stages": [
+        "Drilling"
+      ],
+      "match_keywords_any_of": [
+        "m-mill-b",
+        "drilling",
+        "p-004",
+        "p-003",
+        "machine conflict",
+        "overlap"
+      ]
+    },
+    {
+      "id": "ISS-3",
+      "kind": "sequence_violation",
+      "summary": "P-005 Drilling is planned to start 2026-05-11, but its upstream stage P-005 Cutting does not finish until 2026-05-12. Sequential-dependency violation.",
+      "must_be_flagged": true,
+      "involved_parts": [
+        "P-005"
+      ],
+      "involved_stages": [
+        "Cutting",
+        "Drilling"
+      ],
+      "match_keywords_any_of": [
+        "p-005",
+        "drilling",
+        "cutting",
+        "before",
+        "predecessor",
+        "sequence",
+        "dependency"
+      ]
+    },
+    {
+      "id": "ISS-4",
+      "kind": "material_delay_uncascaded",
+      "summary": "P-006 raw-material delivery from TitanIT GmbH is 8 days late. Cutting has been pushed to 2026-05-13 but downstream stages (Drilling, CMM inspection) still carry the original planned dates \u2014 the schedule has not been rebaselined.",
+      "must_be_flagged": true,
+      "involved_parts": [
+        "P-006"
+      ],
+      "involved_stages": [
+        "Material delivery",
+        "Cutting",
+        "Drilling",
+        "CMM inspection"
+      ],
+      "match_keywords_any_of": [
+        "p-006",
+        "titanit",
+        "material delivery",
+        "delay",
+        "rebaselin",
+        "downstream",
+        "not updated"
+      ]
+    }
+  ],
+  "scoring": {
+    "total_issues": 4,
+    "match_rule": "An LLM-flagged issue matches a GT issue if the kind aligns (cascade / machine conflict / sequence violation / cascade-not-rebaselined) AND the LLM mentions at least one of the match keywords for that issue. Each GT issue can match at most one LLM flag.",
+    "passing_threshold": "Strong = catch all 4 with 0 false positives; Pass = recall and precision both >= 0.70."
+  }
+}

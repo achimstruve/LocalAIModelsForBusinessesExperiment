@@ -1,0 +1,109 @@
+{
+  "workflow": "BM.1",
+  "scenario": "Drawing verification \u2014 synthetic post-extraction test case (25 dimensions of a generic turbomachinery part)",
+  "rule": "Flag any dimension where |drawing_value - model_value| > 10% of total tolerance band (tolerance_plus + tolerance_minus).",
+  "informational_only_dims": [
+    "D025 (surface roughness Ra is not extractable from 3D model and is expected to be reported as N/A, not flagged as a discrepancy)."
+  ],
+  "must_flag": [
+    {
+      "dim_id": "D002",
+      "feature": "Inner bore diameter",
+      "drawing_value": 42.5,
+      "tolerance_band": 0.05,
+      "model_value": 42.51,
+      "delta": 0.01,
+      "threshold_10pct": 0.005,
+      "ratio_to_band": 0.2
+    },
+    {
+      "dim_id": "D004",
+      "feature": "Total length",
+      "drawing_value": 180.0,
+      "tolerance_band": 0.4,
+      "model_value": 180.15,
+      "delta": 0.15,
+      "threshold_10pct": 0.04,
+      "ratio_to_band": 0.375
+    },
+    {
+      "dim_id": "D006",
+      "feature": "Step length L2",
+      "drawing_value": 38.0,
+      "tolerance_band": 0.2,
+      "model_value": 38.025,
+      "delta": 0.025,
+      "threshold_10pct": 0.02,
+      "ratio_to_band": 0.125
+    },
+    {
+      "dim_id": "D008",
+      "feature": "Chamfer 1 length",
+      "drawing_value": 2.0,
+      "tolerance_band": 0.1,
+      "model_value": 2.012,
+      "delta": 0.012,
+      "threshold_10pct": 0.01,
+      "ratio_to_band": 0.12
+    },
+    {
+      "dim_id": "D012",
+      "feature": "Hole circle PCD",
+      "drawing_value": 52.0,
+      "tolerance_band": 0.1,
+      "model_value": 52.03,
+      "delta": 0.03,
+      "threshold_10pct": 0.01,
+      "ratio_to_band": 0.3
+    },
+    {
+      "dim_id": "D014",
+      "feature": "Groove width",
+      "drawing_value": 3.0,
+      "tolerance_band": 0.06,
+      "model_value": 3.02,
+      "delta": 0.02,
+      "threshold_10pct": 0.006,
+      "ratio_to_band": 0.333
+    },
+    {
+      "dim_id": "D019",
+      "feature": "Wall thickness, min",
+      "drawing_value": 3.5,
+      "tolerance_band": 0.2,
+      "model_value": 3.42,
+      "delta": 0.08,
+      "threshold_10pct": 0.02,
+      "ratio_to_band": 0.4
+    },
+    {
+      "dim_id": "D022",
+      "feature": "Counterbore depth",
+      "drawing_value": 4.0,
+      "tolerance_band": 0.1,
+      "model_value": 4.012,
+      "delta": 0.012,
+      "threshold_10pct": 0.01,
+      "ratio_to_band": 0.12
+    },
+    {
+      "dim_id": "D024",
+      "feature": "Lead-in chamfer length",
+      "drawing_value": 0.5,
+      "tolerance_band": 0.05,
+      "model_value": 0.51,
+      "delta": 0.01,
+      "threshold_10pct": 0.005,
+      "ratio_to_band": 0.2
+    }
+  ],
+  "summary": {
+    "total_dimensions": 25,
+    "must_flag_count": 9,
+    "compliant_count": 15,
+    "informational_count": 1
+  },
+  "scoring": {
+    "passing_threshold": "Strong pass = catch all 9 flagged dims with 0 false positives. Pass = precision >= 0.85 AND recall >= 0.85. Weak/fail = either metric < 0.85."
+  }
+}

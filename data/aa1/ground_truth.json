@@ -1,0 +1,68 @@
+{
+  "workflow": "AA.1",
+  "scenario": "Material certificate compliance — synthetic test case",
+  "expected_deviations": [
+    {
+      "id": "DEV-1",
+      "field": "Yield strength",
+      "spec_requirement": ">= 170 MPa",
+      "cert_value": "160 MPa",
+      "severity": "fail",
+      "must_be_flagged": true,
+      "rationale": "Below minimum acceptance value; structural risk."
+    },
+    {
+      "id": "DEV-2",
+      "field": "Surface roughness Ra",
+      "spec_requirement": "<= 0.8 micrometres",
+      "cert_value": "0.95 micrometres",
+      "severity": "fail",
+      "must_be_flagged": true,
+      "rationale": "Exceeds maximum allowable surface roughness."
+    },
+    {
+      "id": "DEV-3",
+      "field": "Intergranular corrosion test (ASTM A262 Practice E)",
+      "spec_requirement": "Pass required",
+      "cert_value": "Test not performed",
+      "severity": "fail",
+      "must_be_flagged": true,
+      "rationale": "Required test missing; cannot verify compliance."
+    },
+    {
+      "id": "DEV-4",
+      "field": "Charpy impact at -196 deg C",
+      "spec_requirement": ">= 60 J (3-specimen average)",
+      "cert_value": "54 J (3-specimen average)",
+      "severity": "fail",
+      "must_be_flagged": true,
+      "rationale": "Below minimum impact toughness for cryogenic service."
+    }
+  ],
+  "expected_no_deviations": [
+    "Material designation",
+    "Tensile strength",
+    "Elongation",
+    "Hardness",
+    "Solution annealing temperature",
+    "Cooling rate",
+    "Carbon content",
+    "Manganese content",
+    "Phosphorus content",
+    "Sulfur content",
+    "Silicon content",
+    "Chromium content",
+    "Nickel content",
+    "Molybdenum content",
+    "Nitrogen content",
+    "Magnetic permeability",
+    "Heat number traceability",
+    "Mill source identification",
+    "Metallurgist signature"
+  ],
+  "scoring": {
+    "total_deviations_to_catch": 4,
+    "total_compliant_fields_to_not_falsely_flag": 19,
+    "passing_threshold": "Catch all 4 deviations with 0 false positives = strong pass; catch >=3/4 with <=1 false positive = pass; otherwise weak/fail."
+  }
+}

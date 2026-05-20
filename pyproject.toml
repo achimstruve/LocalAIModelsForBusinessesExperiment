@@ -1,0 +1,16 @@
+[project]
+name = "turbocam-mini-experiment"
+version = "0.3.0"
+description = "Tensorix-based hardware-fit validation for Turbocam Phase 1 AI workflows. Includes AA.1 cert-vs-spec, BM.1 reasoning, BM.1 vision extraction (OCR + LLM), PDF extraction (with auto-OCR fallback for scanned), Gantt-spreadsheet read-only issue detection, and Gantt-spreadsheet write/manipulation under cascade-update scenarios. Multi-model, multi-run, statistical aggregation."
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.40.0",
+    "easyocr>=1.7.1",
+    "pillow>=10.0.0",
+    "numpy>=1.26.0",
+    "openpyxl>=3.1.5",
+    "pymupdf>=1.24.0",
+]
+
+[tool.uv]
+package = false
