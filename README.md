@@ -82,7 +82,7 @@ uv run python run_experiment.py --runs 10 --no-extract
 
 # Single workflow
 uv run python run_experiment.py --workflow xlsx_modify --runs 10
-uv run python run_experiment.py --workflow pdf_extract --pdfs cv.pdf court_letter.pdf --runs 5
+uv run python run_experiment.py --workflow pdf_extract --pdfs llm_finetuning_report.pdf llm_finetuning_report_scanned.pdf --runs 5
 
 # Override model list
 uv run python run_experiment.py --runs 10 --models meta-llama/llama-3.3-70b-instruct qwen/qwen3.5-9b

@@ -1,5 +1,5 @@
 {
-  "workflow": "BM.1",
+  "workflow": "bm1",
   "scenario": "Drawing verification \u2014 synthetic post-extraction test case (25 dimensions of a generic turbomachinery part)",
   "rule": "Flag any dimension where |drawing_value - model_value| > 10% of total tolerance band (tolerance_plus + tolerance_minus).",
   "informational_only_dims": [

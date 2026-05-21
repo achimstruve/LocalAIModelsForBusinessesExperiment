@@ -1,6 +1,6 @@
 {
   "spreadsheet": "timeline.xlsx",
-  "scenario": "Synthetic Turbocam ZK.1 project timeline with 4 deliberately-injected scheduling issues. The LLM should review the timeline and flag every issue as an actionable concern for Lorant (the day-to-day scheduler).",
+  "scenario": "Synthetic manufacturing project timeline with 4 deliberately-injected scheduling issues. The LLM should review the timeline and flag every issue as an actionable concern for the production scheduler.",
   "expected_issues": [
     {
       "id": "ISS-1",

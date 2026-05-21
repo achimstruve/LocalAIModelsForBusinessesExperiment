@@ -21,18 +21,11 @@ data/bm1/ocr_cache/
 data/pdf_extract/text_cache/
 data/pdf_extract/page_cache/
 
-# Sensitive data not yet replaced with synthetic equivalents
-# (see RELEASE_PLAN.md -- remove these lines once synthetic replacements land)
+# Legacy personal/legal PDFs (deleted; keep rule as safety net)
 data/*.pdf
-data/pdf_extract/cv.pdf
-data/pdf_extract/cover_letter.pdf
-data/pdf_extract/court_letter.pdf
-data/pdf_extract/notary_protocol.pdf
-data/pdf_extract/*_ground_truth.json
-data/bm1/technical-drawing-1.jpg
-data/bm1/technical-drawing-2.jpg
-data/bm1/drawing-*_ground_truth.json
-data/bm1/technical-drawing-*_ground_truth.json
+
+# PDF generator script (utility, not part of the benchmark)
+generate_pdf.py
 
 # Internal planning docs (not for public repo)
 CLAUDE.md

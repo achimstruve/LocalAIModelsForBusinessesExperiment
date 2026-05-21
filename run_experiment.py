@@ -1,12 +1,12 @@
 """
-Mini experiment runner — Turbocam Phase 1 hardware-fit model validation.
+SME-AI workflow benchmark — open-model fit on commodity GPU tiers.
 
-Tests open-source models served via the Tensorix OpenAI-compatible API on three
-synthetic / semi-synthetic versions of Turbocam workflows:
+Tests open-source models served via the Tensorix OpenAI-compatible API on six
+synthetic / semi-synthetic SME-relevant workflows:
 
-    aa1          AA.1 material certificate compliance (text)
-    bm1          BM.1 drawing-vs-3D dimension comparison reasoning (text)
-    bm1_extract  BM.1 vision: OCR locally (EasyOCR) + LLM extracts dim+tol table
+    aa1          Material certificate compliance (text)
+    bm1          Drawing-vs-3D dimension comparison reasoning (text)
+    bm1_extract  Vision: OCR locally (EasyOCR) + LLM extracts dim+tol table
 
 Models compared (all fit Tier 2 / Tier 1 hardware comfortably):
 
@@ -398,7 +398,7 @@ def parse_json_response(text: str) -> dict:
     return json.loads(text)
 
 
-# ----------------------------- AA.1 evaluator ----------------------------- #
+# ----------------------------- aa1 evaluator ------------------------------ #
 
 def run_aa1(client: OpenAI, model: str, temperature: float) -> dict:
     system_prompt = (PROMPTS / "aa1_system.txt").read_text(encoding="utf-8")
@@ -474,7 +474,7 @@ def run_aa1(client: OpenAI, model: str, temperature: float) -> dict:
     }
 
 
-# ----------------------------- BM.1 evaluator ----------------------------- #
+# ----------------------------- bm1 evaluator ------------------------------ #
 
 def load_csv(path: Path) -> list[dict]:
     with path.open() as f:
@@ -533,7 +533,7 @@ def run_bm1(client: OpenAI, model: str, temperature: float) -> dict:
     }
 
 
-# ---------------------- BM.1 extract evaluator ---------------------------- #
+# ---------------------- bm1_extract evaluator ----------------------------- #
 
 _OCR_READER = None
 
@@ -745,7 +745,7 @@ PDF_TEXT_CACHE = DATA / "pdf_extract" / "text_cache"
 PDF_TEXT_CACHE.mkdir(parents=True, exist_ok=True)
 
 
-# ---------------------- BM.1 VLM (direct image → vision model) ----------- #
+# ---------------------- bm1_vlm (direct image → vision model) ------------ #
 
 def _image_to_data_url(path: Path) -> str:
     """Read a JPEG/PNG image and return an OpenAI-compatible data: URL."""
@@ -1146,7 +1146,7 @@ def run_pdf_extract(client: OpenAI, model: str, temperature: float, pdf_name: st
     }
 
 
-# ---------------------- ZK.1 spreadsheet read (xlsx_gantt) -------------- #
+# ---------------------- xlsx_gantt (spreadsheet read) -------------------- #
 
 def _read_xlsx_as_table(path: Path) -> list[dict]:
     try:
@@ -1252,7 +1252,7 @@ def run_xlsx_gantt(client: OpenAI, model: str, temperature: float) -> dict:
     }
 
 
-# ---------------------- ZK.1 spreadsheet write (xlsx_modify) ------------ #
+# ---------------------- xlsx_modify (spreadsheet write) ------------------ #
 
 def run_xlsx_modify(client: OpenAI, model: str, temperature: float) -> dict:
     base_path = DATA / "xlsx_modify" / "timeline_baseline.xlsx"
@@ -1499,8 +1499,8 @@ def main() -> None:
                              "bm1_vlm / pdf_vlm → OpenRouter VLM ladder.")
     parser.add_argument("--runs", type=int, default=10, help="Runs per (workflow, model[, drawing]) combination.")
     parser.add_argument("--temperature", type=float, default=0.1)
-    parser.add_argument("--drawings", nargs="+", default=["technical-drawing-1.jpg", "technical-drawing-2.jpg"], help="Drawings for bm1_extract / bm1_vlm.")
-    parser.add_argument("--pdfs", nargs="+", default=["cv.pdf", "cover_letter.pdf", "court_letter.pdf", "notary_protocol.pdf"], help="PDFs for pdf_extract / pdf_vlm.")
+    parser.add_argument("--drawings", nargs="+", default=["technical-drawing-1.jpg", "technical-drawing-2.jpg", "technical-drawing-3.jpg", "technical-drawing-4.jpg", "technical-drawing-5.jpg", "technical-drawing-6.jpg"], help="Drawings for bm1_extract / bm1_vlm.")
+    parser.add_argument("--pdfs", nargs="+", default=["llm_finetuning_report.pdf", "llm_finetuning_report_scanned.pdf", "llm_finetuning_report_image.pdf"], help="PDFs for pdf_extract / pdf_vlm.")
     parser.add_argument("--no-extract", action="store_true", help="Skip the bm1_extract workflow (which needs EasyOCR).")
     parser.add_argument("--no-save", action="store_true")
     parser.add_argument("--clear-cache", action="store_true",
@@ -1588,21 +1588,21 @@ def main() -> None:
     }
 
     workflow_meta = {
-        "aa1": {"name": "AA.1 — Material certificate compliance",
+        "aa1": {"name": "aa1 — Material certificate compliance",
                 "description": "Synthetic spec + cert with 4 deliberate deviations."},
-        "bm1": {"name": "BM.1 — Drawing-vs-3D dimension comparison reasoning",
+        "bm1": {"name": "bm1 — Drawing-vs-3D dimension comparison reasoning",
                 "description": "25 dimensions; 9 must flag at the 10% tolerance-band rule."},
-        "bm1_extract": {"name": "BM.1 — Vision extraction (EasyOCR + LLM hybrid)",
+        "bm1_extract": {"name": "bm1_extract — Vision extraction (EasyOCR + LLM hybrid)",
                         "description": "Local EasyOCR + LLM consolidates dim+tolerance table."},
-        "bm1_vlm":     {"name": "BM.1 — Direct vision extraction (VLM, no OCR)",
+        "bm1_vlm":     {"name": "bm1_vlm — Direct vision extraction (VLM, no OCR)",
                         "description": "Drawing image sent directly to a vision-language model. Tests off-the-shelf VLM upper bound before fine-tuning."},
         "pdf_extract": {"name": "PDF — Structured extraction with native + OCR fallback",
                         "description": "PyMuPDF + EasyOCR fallback; LLM consolidates entities."},
         "pdf_vlm":     {"name": "PDF — Direct vision extraction (VLM, no OCR)",
                         "description": "PDF pages rendered to PNG and sent directly to a vision-language model. Tests off-the-shelf VLM upper bound on mixed native + scanned docs."},
-        "xlsx_gantt":  {"name": "ZK.1 — Spreadsheet read: detect scheduling issues",
+        "xlsx_gantt":  {"name": "xlsx_gantt — Spreadsheet read: detect scheduling issues",
                         "description": "Project Gantt timeline with 4 deliberately-injected issues."},
-        "xlsx_modify": {"name": "ZK.1 — Spreadsheet write: propose cascade-update edits",
+        "xlsx_modify": {"name": "xlsx_modify — Spreadsheet write: propose cascade-update edits",
                         "description": "Clean Gantt baseline plus a written delay scenario."},
     }
 

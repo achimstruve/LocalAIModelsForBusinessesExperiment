@@ -1,7 +1,7 @@
 [project]
-name = "turbocam-mini-experiment"
-version = "0.3.0"
-description = "Tensorix-based hardware-fit validation for Turbocam Phase 1 AI workflows. Includes AA.1 cert-vs-spec, BM.1 reasoning, BM.1 vision extraction (OCR + LLM), PDF extraction (with auto-OCR fallback for scanned), Gantt-spreadsheet read-only issue detection, and Gantt-spreadsheet write/manipulation under cascade-update scenarios. Multi-model, multi-run, statistical aggregation."
+name = "agen-icp-6"
+version = "0.4.0"
+description = "SME-AI workflow benchmark: open-model fit on commodity GPU tiers. Six ICP-grounded tasks — cert-vs-spec compliance, drawing-vs-3D reasoning, vision extraction (OCR + LLM), multilingual PDF entity extraction (with auto-OCR fallback for scanned), Gantt-spreadsheet issue detection, and spreadsheet cascade-update editing. Multi-model, multi-run, statistical aggregation."
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.40.0",

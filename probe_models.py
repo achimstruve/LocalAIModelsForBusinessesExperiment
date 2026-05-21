@@ -29,7 +29,7 @@ except ImportError:
     sys.exit(2)
 
 
-# Keywords we care about for the Turbocam experiment. Pass cmdline args to override.
+# Keywords for the SME-AI benchmark model search. Pass cmdline args to override.
 DEFAULT_KEYWORDS = [
     "qwen3",        # qwen3-vl-235b, qwen3.5-vl, etc.
     "qwen3.5",

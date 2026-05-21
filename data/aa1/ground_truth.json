@@ -1,5 +1,5 @@
 {
-  "workflow": "AA.1",
+  "workflow": "aa1",
   "scenario": "Material certificate compliance — synthetic test case",
   "expected_deviations": [
     {

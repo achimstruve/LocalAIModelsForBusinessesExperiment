@@ -1,0 +1,41 @@
+{
+  "drawing": "technical-drawing-6.jpg",
+  "title": "Clevis Mount Bracket (drawing CMB-250605-01, Rev A)",
+  "material": "Al 6082-T6",
+  "units": "millimetres",
+  "scale": "1:1",
+  "general_tolerance_note": "ISO 2768-m; 1st angle projection; all dimensions in mm; break all sharp edges 0.2 to 0.5 mm; remove all burrs and sharp edges; surface finish Ra 1.6 µm unless otherwise specified; machined surfaces only; heat treat T6; finish as-machined",
+  "expected_dimensions": [
+    {"id": "GD-01", "kind": "length",           "value": 70.0,  "feature": "overall fork width across the top (front view)",                "as_drawn": "70.0"},
+    {"id": "GD-02", "kind": "length",           "value": 24.0,  "feature": "inner span dimension across the fork (front view)",             "as_drawn": "24.0"},
+    {"id": "GD-03", "kind": "length",           "value": 16.0,  "feature": "slot width between the fork prongs (front view)",               "as_drawn": "16.0"},
+    {"id": "GD-04", "kind": "chamfer",          "value": 2.0,   "angle_deg": 45, "count": 2, "feature": "2 chamfers 2.0×45 on the fork prong tops", "as_drawn": "2 × 2.0 × 45°"},
+    {"id": "GD-05", "kind": "diameter",         "value": 20,    "tolerance_plus": 0.021, "tolerance_minus": 0, "feature": "pin bore diameter, ISO tolerance class H7, THRU (+0.021/0)", "as_drawn": "Ø20 H7 +0.021/0 THRU"},
+    {"id": "GD-06", "kind": "radius",           "value": 12,    "feature": "fillet radius at the fork-to-body transition (front view)",     "as_drawn": "R12"},
+    {"id": "GD-07", "kind": "length",           "value": 78.0,  "feature": "overall height of the bracket (front view / section A-A)",      "as_drawn": "78.0"},
+    {"id": "GD-08", "kind": "length",           "value": 16.0,  "feature": "base plate thickness (section A-A / side view)",                "as_drawn": "16.0"},
+    {"id": "GD-09", "kind": "length",           "value": 32.0,  "feature": "fork outer width in section A-A",                               "as_drawn": "32.0"},
+    {"id": "GD-10", "kind": "radius",           "value": 6,     "feature": "fillet radius in section A-A",                                  "as_drawn": "R6"},
+    {"id": "GD-11", "kind": "radius",           "value": 25.0,  "feature": "lug-head outer radius (right side view)",                       "as_drawn": "R25.0"},
+    {"id": "GD-12", "kind": "length",           "value": 50.0,  "feature": "bracket height dimension in section A-A",                       "as_drawn": "50.0"},
+    {"id": "GD-13", "kind": "length",           "value": 60.0,  "feature": "base width shown in the right side view",                       "as_drawn": "60.0"},
+    {"id": "GD-14", "kind": "length",           "value": 120.0, "feature": "overall length of the base plate (top view)",                  "as_drawn": "120.0"},
+    {"id": "GD-15", "kind": "length",           "value": 80.0,  "tolerance_plus": 0.1, "tolerance_minus": 0.1, "feature": "longitudinal mounting-hole spacing (with ±0.1)", "as_drawn": "80.0 ±0.1"},
+    {"id": "GD-16", "kind": "length",           "value": 80.0,  "feature": "overall width of the base plate (top view)",                    "as_drawn": "80.0"},
+    {"id": "GD-17", "kind": "length",           "value": 50.0,  "tolerance_plus": 0.1, "tolerance_minus": 0.1, "feature": "transverse mounting-hole spacing (with ±0.1)", "as_drawn": "50.0 ±0.1"},
+    {"id": "GD-18", "kind": "length",           "value": 20.0,  "feature": "base edge-margin to mounting holes (appears twice)",            "as_drawn": "20.0"},
+    {"id": "GD-19", "kind": "diameter_pattern", "value": 11.0,  "count": 4, "feature": "4 mounting holes Ø11.0 THRU",                        "as_drawn": "4 × Ø11.0 THRU"},
+    {"id": "GD-20", "kind": "diameter",         "value": 20.0,  "feature": "counterbore diameter for the Ø11.0 mounting holes",             "as_drawn": "⌴ Ø20.0"},
+    {"id": "GD-21", "kind": "length",           "value": 6.0,   "feature": "counterbore depth for the Ø11.0 mounting holes",                "as_drawn": "▽ 6.0"},
+    {"id": "GD-22", "kind": "length",           "value": 18.0,  "tolerance_plus": 0.2, "tolerance_minus": 0, "feature": "base through-slot width, 18.0 WIDE THRU (detail B, with +0.2/0)", "as_drawn": "SLOT 18.0 WIDE +0.2/0"},
+    {"id": "GD-23", "kind": "radius",           "value": 9.0,   "feature": "slot end radius in detail B (2:1)",                             "as_drawn": "R9.0"},
+    {"id": "GD-24", "kind": "length",           "value": 40.0,  "tolerance_plus": 0.2, "tolerance_minus": 0, "feature": "slot overall length in detail B (2:1, with +0.2/0)", "as_drawn": "40.0 +0.2/0"},
+    {"id": "GD-25", "kind": "position",         "value": 0.05,  "datum": "A", "feature": "true position 0.05 to datum A on the mounting holes",  "as_drawn": "⌖ 0.05 A"},
+    {"id": "GD-26", "kind": "surface_finish",   "value": 1.6,   "feature": "general machined-surface roughness Ra 1.6 µm (notes)",          "as_drawn": "Ra 1.6 µm"}
+  ],
+  "scoring": {
+    "total_dimensions": 26,
+    "match_rule": "An LLM-extracted dimension matches a GT entry if (a) kind matches OR is a compatible alias, (b) numerical value within ±0.05 (mm precision), (c) tolerances within ±0.05 if specified. Compound counterbore annotations like '4 × Ø11.0 THRU ⌴ Ø20.0 ▽ 6.0' are split into hole pattern + counterbore diameter + counterbore depth; the model gets credit for each independently. A feature dimensioned in more than one view is counted once. ISO tolerance class H7 is recorded in 'as_drawn'; the explicit +0.021/0 deviation is what is scored for that feature.",
+    "passing_threshold": "Strong = recall and precision >= 0.85; Pass = both >= 0.70."
+  }
+}
