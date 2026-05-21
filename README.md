@@ -123,6 +123,54 @@ Each run produces:
 
 For `schedule_write`: the `forbidden_row_violations` field in the raw JSON shows whether the model touched rows it was told not to -- a real-world risk signal even if precision/recall look fine.
 
+## Results (N=10 runs, May 2026)
+
+### Overview: F1 by model and workflow
+
+The heatmap below shows the mean F1 score for every (model, workflow) combination. Text workflows use models directly; multi-input workflows (dims_ocr, dims_vlm, docs, docs_vlm) show the model-averaged F1 across all input variants. Grey cells indicate the model was not tested on that workflow.
+
+![F1 heatmap across all workflows](assets/heatmap_f1_all.png)
+
+**Key takeaways:**
+- **Compliance** and **schedule_write** are broadly solved -- most models score >= 0.83, several hit perfect F1.
+- **Dims** (tabular comparison reasoning) separates models sharply: gpt-oss-120b and glm-5.1 score 1.00, while smaller models struggle with the tolerance-band logic.
+- **Schedule_read** is the hardest text workflow -- no model exceeds F1 0.68, suggesting multi-row dependency reasoning remains a challenge.
+- **Docs_vlm** (direct VLM on PDF pages) was a complete failure across all VLM models tested via OpenRouter, all scoring 0.00 due to provider-side errors.
+
+### Text workflows: compliance, dims, schedule_read, schedule_write
+
+![Text workflow F1 by model](assets/bar_text_workflows.png)
+
+Dashed lines mark the "strong pass" (0.85, green) and "pass" (0.70, yellow) thresholds. Error bars show standard deviation across 10 runs. Compliance is consistently high across the ladder. The dims workflow shows the biggest spread: models that understand the 10%-tolerance-band rule (gpt-oss-120b, glm-5.1, gpt-oss-20b) separate cleanly from those that don't.
+
+### Dimension extraction: OCR+LLM hybrid vs direct VLM
+
+![Dims OCR vs VLM comparison](assets/bar_vision_comparison.png)
+
+Averaged across all 6 engineering drawings. The direct VLM path (sending the raw drawing image to a vision-language model) outperforms the OCR+LLM hybrid path for the larger VLMs (qwen3.5-122b, qwen3.5-397b), but with high variance. Both approaches remain below the 0.85 strong-pass threshold on average, confirming that off-the-shelf models need fine-tuning for reliable engineering drawing extraction.
+
+### Document entity extraction by PDF type
+
+![Docs workflow by PDF type](assets/bar_docs_by_pdf.png)
+
+Three PDF variants of the same report: native text, image-based, and scanned. Most models handle native text best; the scanned variant (which triggers EasyOCR fallback) degrades gracefully for the top performers but causes significant drops for smaller models.
+
+### Latency vs F1 trade-off
+
+![Latency vs F1 scatter](assets/scatter_latency_f1.png)
+
+Each point is one (model, workflow) combination. The ideal operating region is the top-left corner (high F1, low latency). The fastest models (deepseek-v4-flash, qwen3.5-9b) respond in 2-13 seconds; the slowest (glm-5.1 on schedule_read) take ~93 seconds. Compliance and schedule_write cluster in the top-left; dims and schedule_read show more spread.
+
+### Regenerating charts
+
+To regenerate these charts from a results JSON:
+
+```bash
+python generate_charts.py results/run_<timestamp>.json
+```
+
+Charts are written to `assets/`.
+
 ## Project structure
 
 ```
@@ -131,9 +179,11 @@ agen-ops-6/
 ├── LICENSE                    # MIT (code) + CC-BY-4.0 (data/prompts)
 ├── run_experiment.py          # The harness (multi-backend, multi-model, multi-run, 8 workflows)
 ├── probe_models.py            # Model-probe utility
+├── generate_charts.py         # Regenerate result charts from a run JSON
 ├── pyproject.toml             # uv project (openai, easyocr, pillow, numpy, openpyxl, pymupdf)
 ├── .env.example               # Credential template
 ├── .gitignore
+├── assets/                    # Chart PNGs embedded in the README
 ├── docs/
 │   └── METHODOLOGY.md         # Scoring rubrics, sampling settings, limitations
 ├── prompts/                   # One system prompt per workflow
@@ -143,7 +193,7 @@ agen-ops-6/
 │   ├── docs/                  # 3 PDF variants: native, scanned, image-based + ground truth
 │   ├── schedule_read/         # Excel timeline with injected scheduling issues + ground truth
 │   └── schedule_write/        # Baseline schedule + delay scenario + ground truth
-└── results/                   # Run JSONs + summary MDs land here
+└── results/                   # Run JSONs + summary MDs land here (gitignored)
 ```
 
 ## Protocol
