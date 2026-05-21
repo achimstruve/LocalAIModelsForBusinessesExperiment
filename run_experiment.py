@@ -43,8 +43,10 @@ import re
 import signal
 import statistics
 import sys
+import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -157,7 +159,6 @@ def hard_timeout(seconds: float):
 
 def threading_main_thread() -> bool:
     """Return True if we're running on the main thread (signal.alarm needs this)."""
-    import threading
     return threading.current_thread() is threading.main_thread()
 
 
@@ -215,6 +216,9 @@ MODEL_BACKEND: dict[str, str] = {
     "openai/gpt-oss-120b":               "tensorix",
     "openai/gpt-oss-20b":                "tensorix",
     "qwen/qwen3.5-9b":                   "tensorix",
+    "deepseek/deepseek-v4-flash":        "tensorix",
+    "meta-llama/llama-4-maverick":       "tensorix",
+    "qwen/qwen3-235b-a22b-2507":         "tensorix",
     # All vision-language models routed through OpenRouter. Tensorix's hosting of
     # qwen3-vl-235b and qwen3.5-122b was either silently caching (breaking variance
     # estimation) or timing out under the 150s budget — OpenRouter's hosting of the
@@ -224,9 +228,8 @@ MODEL_BACKEND: dict[str, str] = {
     "qwen/qwen-2.5-vl-72b-instruct":     "openrouter",  # baseline (last run F1≈0.77)
     "qwen/qwen3.5-397b-a17b":            "openrouter",  # flagship multimodal-native, ~17B active
     "qwen/qwen3-vl-235b-a22b-thinking":  "openrouter",  # 235B Thinking variant — STEM/technical
-    "qwen/qwen3-vl-32b-instruct":        "openrouter",  # 32B VL — Tier 0.5 candidate
-    "qwen/qwen3-vl-8b-instruct":         "openrouter",  #  8B VL — Tier 0 candidate
-    "z-ai/glm-4.5v":                     "openrouter",  # GLM family vision (sibling of GLM 5.1)
+    "qwen/qwen3-vl-30b-a3b-instruct":    "openrouter",  # 30B MoE VL, ~3B active — Tier 0.5
+    "z-ai/glm-5v-turbo":                 "openrouter",  # GLM 5 Vision (successor to GLM 4.5v)
 }
 
 # Workflow-aware defaults (applied when --models is NOT passed).
@@ -234,9 +237,12 @@ MODEL_BACKEND: dict[str, str] = {
 # minimum hardware tier where the workflow still works. The extract workflow
 # keeps Qwen 2.5 72B as the primary baseline plus three downside comparators.
 _FULL_LADDER = [
+    "qwen/qwen3-235b-a22b-2507",           # ~235B MoE, ~22B active — Tier 2+ (July 2025)
     "openai/gpt-oss-120b",                 # ~120B MoE — Tier 2 only
+    "meta-llama/llama-4-maverick",         # ~400B MoE, ~17B active — Tier 2
     "qwen/qwen-2.5-72b-instruct",          # 72B — Tier 1+
     "meta-llama/llama-3.3-70b-instruct",   # 70B — Tier 1+
+    "deepseek/deepseek-v4-flash",          # MoE — size unverified
     "z-ai/glm-5.1",                        # capable open-weights (size unverified)
     "openai/gpt-oss-20b",                  # 20B — Tier 0.5 representative
     "qwen/qwen3.5-9b",                     # 9B — Tier 0
@@ -258,10 +264,9 @@ _VLM_LADDER = [
     "qwen/qwen3.5-122b-a10b",              # ~70 GB Q4  — Tier 2   (multimodal-native, ~10B active)
     "qwen/qwen3.5-397b-a17b",              # ~225 GB Q4 — Tier 3   (flagship, ~17B active)
     "qwen/qwen3-vl-235b-a22b-thinking",    # ~140 GB Q4 — Tier 2.5 (Thinking variant)
-    "z-ai/glm-4.5v",                       # ~60 GB Q4  — Tier 2   (GLM family vision)
+    "z-ai/glm-5v-turbo",                   # ~60 GB Q4  — Tier 2   (GLM 5 Vision, successor to 4.5v)
     "qwen/qwen-2.5-vl-72b-instruct",       # ~40 GB Q4  — Tier 1+  (baseline; prior F1≈0.77)
-    "qwen/qwen3-vl-32b-instruct",          # ~20 GB Q4  — Tier 0.5 (32B VL)
-    "qwen/qwen3-vl-8b-instruct",           # ~5 GB Q4   — Tier 0   (8B VL)
+    "qwen/qwen3-vl-30b-a3b-instruct",      # ~18 GB Q4  — Tier 0.5 (30B MoE VL, ~3B active)
 ]
 
 DEFAULT_MODELS_PER_WORKFLOW: dict[str, list[str]] = {
@@ -289,6 +294,7 @@ class ClientPool:
     def __init__(self) -> None:
         self._tensorix = None
         self._openrouter = None
+        self._lock = threading.Lock()
 
     def _backend_for(self, model: str) -> str:
         return MODEL_BACKEND.get(model, "tensorix")
@@ -297,22 +303,23 @@ class ClientPool:
         backend = self._backend_for(model)
         # max_retries=0 disables the OpenAI SDK's automatic retry-on-timeout behaviour
         # (default = 2). Without this, a single 150s timeout becomes ~450s wall clock.
-        if backend == "openrouter":
-            if self._openrouter is None:
-                key = os.environ.get("OPENROUTER_API_KEY")
-                url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-                if not key:
-                    raise RuntimeError(f"OPENROUTER_API_KEY not set (needed for {model}). Add it to .env.")
-                self._openrouter = OpenAI(api_key=key, base_url=url, max_retries=0)
-            return self._openrouter
-        # default: tensorix
-        if self._tensorix is None:
-            key = os.environ.get("TENSORIX_API_KEY")
-            url = os.environ.get("TENSORIX_BASE_URL")
-            if not key or not url:
-                raise RuntimeError("TENSORIX_API_KEY or TENSORIX_BASE_URL not set. See .env.example.")
-            self._tensorix = OpenAI(api_key=key, base_url=url, max_retries=0)
-        return self._tensorix
+        with self._lock:
+            if backend == "openrouter":
+                if self._openrouter is None:
+                    key = os.environ.get("OPENROUTER_API_KEY")
+                    url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+                    if not key:
+                        raise RuntimeError(f"OPENROUTER_API_KEY not set (needed for {model}). Add it to .env.")
+                    self._openrouter = OpenAI(api_key=key, base_url=url, max_retries=0)
+                return self._openrouter
+            # default: tensorix
+            if self._tensorix is None:
+                key = os.environ.get("TENSORIX_API_KEY")
+                url = os.environ.get("TENSORIX_BASE_URL")
+                if not key or not url:
+                    raise RuntimeError("TENSORIX_API_KEY or TENSORIX_BASE_URL not set. See .env.example.")
+                self._tensorix = OpenAI(api_key=key, base_url=url, max_retries=0)
+            return self._tensorix
 
 
 # ----------------------------- Tensorix client ---------------------------- #
@@ -1504,6 +1511,11 @@ def main() -> None:
     parser.add_argument("--pdfs", nargs="+", default=["llm_finetuning_report.pdf", "llm_finetuning_report_scanned.pdf", "llm_finetuning_report_image.pdf"], help="PDFs for docs / docs_vlm.")
     parser.add_argument("--no-extract", action="store_true", help="Skip the dims_ocr workflow (which needs EasyOCR).")
     parser.add_argument("--no-save", action="store_true")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Number of (model, item) combos to run in parallel within each workflow (default: 1 = sequential). "
+                             "The outer workflow loop stays sequential; only combos within a workflow are parallelised.")
+    parser.add_argument("--delay", type=float, default=0.5,
+                        help="Seconds to sleep before each LLM API call to avoid provider rate limits (default: 0.5).")
     parser.add_argument("--clear-cache", action="store_true",
                         help="Delete OCR + PDF text + PDF page caches at start of run, forcing re-OCR / re-parse / re-render. "
                              "Use after an interrupted run if scores look suspicious (P=R=0 across the board often means a corrupted cache).")
@@ -1554,6 +1566,8 @@ def main() -> None:
         for w in workflows:
             print(f"  {w:14s} models: {', '.join(models_for(w))}")
     print(f"Runs per combo: {args.runs}")
+    print(f"Workers:      {args.workers}  (parallel combos per workflow)")
+    print(f"Delay:        {args.delay}s  (sleep before each LLM call)")
     print(f"Temperature:  {args.temperature}")
     print(f"Tensorix URL: {os.environ.get('TENSORIX_BASE_URL')}")
     if os.environ.get('OPENROUTER_API_KEY'):
@@ -1576,8 +1590,11 @@ def main() -> None:
 
     total_combos = sum(_combo_count(w) for w in workflows)
     total_runs_planned = total_combos * args.runs
-    runs_completed_overall = 0
-    combos_completed_overall = 0
+    # Thread-safe progress counters (list-of-one so inner functions can mutate).
+    counters = {"runs": 0, "combos": 0}
+    counter_lock = threading.Lock()
+    file_lock = threading.Lock()
+    print_lock = threading.Lock()
     print(f"Plan: {total_combos} combos x {args.runs} runs = {total_runs_planned} LLM calls\n")
 
     report: dict = {
@@ -1607,6 +1624,111 @@ def main() -> None:
                            "description": "Clean Gantt baseline plus a supplier-delay email scenario."},
     }
 
+    def _run_combo(wf: str, model: str, item: str | None,
+                   temperature: float, n_runs: int, delay: float,
+                   pool: ClientPool, timestamp: str, no_save: bool,
+                   total_combos: int, total_runs_planned: int,
+                   counters: dict, counter_lock: threading.Lock,
+                   file_lock: threading.Lock, print_lock: threading.Lock) -> dict:
+        """Execute N runs for a single (workflow, model, item) combo. Thread-safe."""
+        label = f"{wf}/{model}" + (f"/{item}" if item else "")
+        with counter_lock:
+            counters["combos"] += 1
+            combo_num = counters["combos"]
+        with print_lock:
+            print(f"[combo {combo_num}/{total_combos}] {label}  ({n_runs} runs)")
+
+        runs: list[dict] = []
+        consecutive_timeouts = 0
+        TIMEOUT_CIRCUIT_BREAKER = 2
+
+        for i in range(n_runs):
+            time.sleep(delay)
+            run_t0 = time.time()
+            try:
+                client = pool.get(model)
+                if wf == "compliance":
+                    result = run_compliance(client, model, temperature)
+                elif wf == "dims":
+                    result = run_dims(client, model, temperature)
+                elif wf == "dims_ocr":
+                    result = run_dims_ocr(client, model, temperature, item or "")
+                elif wf == "dims_vlm":
+                    result = run_dims_vlm(client, model, temperature, item or "")
+                elif wf == "docs":
+                    result = run_docs(client, model, temperature, item or "")
+                elif wf == "docs_vlm":
+                    result = run_docs_vlm(client, model, temperature, item or "")
+                elif wf == "schedule_read":
+                    result = run_schedule_read(client, model, temperature)
+                elif wf == "schedule_write":
+                    result = run_schedule_write(client, model, temperature)
+                else:
+                    result = {"workflow": wf, "model": model, "error": f"unknown workflow {wf}"}
+            except Exception as e:
+                result = {"workflow": wf, "model": model, "item": item, "error": f"call failed: {e}", "trace": traceback.format_exc()[:500]}
+            run_elapsed = time.time() - run_t0
+
+            if run_elapsed > RUN_TIMEOUT_S * 1.2 and "error" not in result:
+                result.setdefault("metadata", {})["wall_clock_warning"] = (
+                    f"run took {run_elapsed:.1f}s, exceeds RUN_TIMEOUT_S budget of {RUN_TIMEOUT_S}s"
+                )
+            runs.append(result)
+
+            with counter_lock:
+                counters["runs"] += 1
+                progress = f"[{counters['runs']}/{total_runs_planned}]"
+
+            if "error" in result:
+                err_str = (result.get('error', '') or '').lower()
+                is_timeout = "timed out" in err_str or "timeout" in err_str
+                if is_timeout:
+                    consecutive_timeouts += 1
+                else:
+                    consecutive_timeouts = 0
+                with print_lock:
+                    print(f"  {label}  {progress} run {i+1:2d}/{n_runs}: ERROR — {result.get('error', '')[:120]}")
+            else:
+                consecutive_timeouts = 0
+                s = result["score"]
+                with print_lock:
+                    print(f"  {label}  {progress} run {i+1:2d}/{n_runs}: P={s['precision']:.3f}  R={s['recall']:.3f}  F1={s['f1']:.3f}")
+
+            remaining = n_runs - (i + 1)
+            if consecutive_timeouts >= TIMEOUT_CIRCUIT_BREAKER and remaining > 0:
+                with print_lock:
+                    print(f"  {label}  ⚠ Circuit breaker: {consecutive_timeouts} consecutive timeouts — skipping remaining {remaining} run(s).")
+                for j in range(remaining):
+                    skip_result = {
+                        "workflow": wf, "model": model, "item": item,
+                        "error": f"skipped: circuit-breaker tripped after {consecutive_timeouts} consecutive timeouts",
+                    }
+                    runs.append(skip_result)
+                    with counter_lock:
+                        counters["runs"] += 1
+                        progress2 = f"[{counters['runs']}/{total_runs_planned}]"
+                    with print_lock:
+                        print(f"  {label}  {progress2} run {i+2+j:2d}/{n_runs}: SKIPPED (circuit breaker)")
+                break
+
+        agg = aggregate(runs)
+        combo_record = {
+            "workflow": wf,
+            "model": model,
+            "drawing": item if wf in ("dims_ocr", "dims_vlm") else None,
+            "pdf":     item if wf in ("docs", "docs_vlm")  else None,
+            "aggregate": agg,
+            "runs": runs,
+        }
+        if not no_save:
+            with file_lock:
+                with open(RESULTS / f"run_{timestamp}.partial.jsonl", "a", encoding="utf-8") as _ckpt:
+                    _ckpt.write(json.dumps(combo_record, default=str) + "\n")
+        with print_lock:
+            print(f"  {label}  → aggregate: P={fmt_pm(agg['precision'])}  R={fmt_pm(agg['recall'])}  F1={fmt_pm(agg['f1'])}  lat={fmt_pm(agg['latency_s'], places=1)}s")
+            print()
+        return combo_record
+
     for wf in workflows:
         wf_block: dict = {
             "name": workflow_meta[wf]["name"],
@@ -1623,93 +1745,21 @@ def main() -> None:
         else:
             combos = [(model, None) for model in wf_models]
 
-        for model, item in combos:
-            label = f"{wf}/{model}" + (f"/{item}" if item else "")
-            combos_completed_overall += 1
-            print(f"[combo {combos_completed_overall}/{total_combos}] {label}  ({args.runs} runs)")
-            runs: list[dict] = []
-            consecutive_timeouts = 0
-            TIMEOUT_CIRCUIT_BREAKER = 2  # skip remaining runs after K consecutive timeouts
-            for i in range(args.runs):
-                run_t0 = time.time()
-                try:
-                    client = pool.get(model)
-                    if wf == "compliance":
-                        result = run_compliance(client, model, args.temperature)
-                    elif wf == "dims":
-                        result = run_dims(client, model, args.temperature)
-                    elif wf == "dims_ocr":
-                        result = run_dims_ocr(client, model, args.temperature, item or "")
-                    elif wf == "dims_vlm":
-                        result = run_dims_vlm(client, model, args.temperature, item or "")
-                    elif wf == "docs":
-                        result = run_docs(client, model, args.temperature, item or "")
-                    elif wf == "docs_vlm":
-                        result = run_docs_vlm(client, model, args.temperature, item or "")
-                    elif wf == "schedule_read":
-                        result = run_schedule_read(client, model, args.temperature)
-                    elif wf == "schedule_write":
-                        result = run_schedule_write(client, model, args.temperature)
-                    else:
-                        result = {"workflow": wf, "model": model, "error": f"unknown workflow {wf}"}
-                except Exception as e:
-                    result = {"workflow": wf, "model": model, "item": item, "error": f"call failed: {e}", "trace": traceback.format_exc()[:500]}
-                run_elapsed = time.time() - run_t0
-                # Hard wall-clock guard: if a single run blew through the per-call budget
-                # (e.g. retries ate ~2x the per-attempt timeout), surface that explicitly so
-                # the user can spot stragglers in the partial JSONL.
-                if run_elapsed > RUN_TIMEOUT_S * 1.2 and "error" not in result:
-                    result.setdefault("metadata", {})["wall_clock_warning"] = (
-                        f"run took {run_elapsed:.1f}s, exceeds RUN_TIMEOUT_S budget of {RUN_TIMEOUT_S}s"
-                    )
-                runs.append(result)
-                runs_completed_overall += 1
-                progress = f"[{runs_completed_overall}/{total_runs_planned}]"
-                if "error" in result:
-                    err_str = (result.get('error', '') or '').lower()
-                    is_timeout = "timed out" in err_str or "timeout" in err_str
-                    if is_timeout:
-                        consecutive_timeouts += 1
-                    else:
-                        consecutive_timeouts = 0
-                    print(f"  {progress} run {i+1:2d}/{args.runs}: ERROR — {result.get('error', '')[:120]}")
-                else:
-                    consecutive_timeouts = 0
-                    s = result["score"]
-                    print(f"  {progress} run {i+1:2d}/{args.runs}: P={s['precision']:.3f}  R={s['recall']:.3f}  F1={s['f1']:.3f}")
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            futures = {}
+            for model, item in combos:
+                future = executor.submit(
+                    _run_combo, wf, model, item,
+                    args.temperature, args.runs, args.delay,
+                    pool, timestamp, args.no_save,
+                    total_combos, total_runs_planned,
+                    counters, counter_lock, file_lock, print_lock,
+                )
+                futures[future] = (model, item)
 
-                # Circuit breaker: if K consecutive runs timed out on the same combo,
-                # mark remaining runs as skipped and move on. Saves ~K × RUN_TIMEOUT_S of
-                # wasted wall clock on a model that's clearly broken on this combo.
-                remaining = args.runs - (i + 1)
-                if consecutive_timeouts >= TIMEOUT_CIRCUIT_BREAKER and remaining > 0:
-                    print(f"  ⚠ Circuit breaker: {consecutive_timeouts} consecutive timeouts — skipping remaining {remaining} run(s) for this combo.")
-                    for j in range(remaining):
-                        skip_result = {
-                            "workflow": wf, "model": model, "item": item,
-                            "error": f"skipped: circuit-breaker tripped after {consecutive_timeouts} consecutive timeouts",
-                        }
-                        runs.append(skip_result)
-                        runs_completed_overall += 1
-                        progress2 = f"[{runs_completed_overall}/{total_runs_planned}]"
-                        print(f"  {progress2} run {i+2+j:2d}/{args.runs}: SKIPPED (circuit breaker)")
-                    break
-
-            agg = aggregate(runs)
-            combo_record = {
-                "workflow": wf,
-                "model": model,
-                "drawing": item if wf in ("dims_ocr", "dims_vlm") else None,
-                "pdf":     item if wf in ("docs", "docs_vlm")  else None,
-                "aggregate": agg,
-                "runs": runs,
-            }
-            wf_block["combos"].append(combo_record)
-            if not args.no_save:
-                with open(RESULTS / f"run_{timestamp}.partial.jsonl", "a", encoding="utf-8") as _ckpt:
-                    _ckpt.write(json.dumps(combo_record, default=str) + "\n")
-            print(f"  → aggregate: P={fmt_pm(agg['precision'])}  R={fmt_pm(agg['recall'])}  F1={fmt_pm(agg['f1'])}  lat={fmt_pm(agg['latency_s'], places=1)}s")
-            print()
+            for future in as_completed(futures):
+                combo_record = future.result()
+                wf_block["combos"].append(combo_record)
 
         if len(wf_block["combos"]) >= 2:
             print(f"--- {wf} ranked (F1 mean, descending) ---")

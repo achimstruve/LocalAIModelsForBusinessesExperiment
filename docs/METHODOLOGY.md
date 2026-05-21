@@ -247,7 +247,7 @@ For each (workflow, model) combination (or (workflow, model, drawing/PDF) triple
 
 4. **Synthetic data.** All inputs are synthetic. While designed to mirror real-world complexity (mixed units, missing fields, borderline values, scanned-document noise), they may not capture the full distribution of messiness found in production documents.
 
-5. **Model version drift.** Inference providers (Tensorix, OpenRouter) may silently update model weights or quantization. Results are only reproducible if model versions are locked at the time of the run. The harness logs the model ID per call but does not verify weight checksums.
+5. **Model provenance is not verified.** The harness requests a model by ID, but neither Tensorix nor OpenRouter provides cryptographic attestation that the weights actually served match the requested checkpoint. OpenRouter is a routing layer that dispatches to downstream providers (Together, Fireworks, DeepInfra, etc.); the harness constrains routing to fp16/bf16/fp8 quantizations and parameter-compliant providers, but a backend could still serve a subtly different checkpoint, post-training variant, or silently updated weight revision. Tensorix presents the same trust-the-label situation. The harness does not currently capture provider-identifying response headers (e.g. OpenRouter's `x-provider`). Results should therefore be read as "performance of the model ID as served by provider X on date Y" rather than "performance of a verified model artifact."
 
 6. **Temperature sensitivity.** The default temperature of 0.1 was chosen for reproducibility. Higher temperatures may produce different score distributions. The benchmark does not sweep temperature.
 
@@ -270,3 +270,15 @@ To reproduce published results:
 5. Ensure EasyOCR is running on the same platform (CPU mode) -- OCR results may vary slightly across hardware.
 
 The harness writes full raw outputs (including model responses) to `results/run_<timestamp>.json`, enabling post-hoc re-scoring if the evaluation logic is updated.
+
+---
+
+## 9. Scope and roadmap
+
+This benchmark is a first iteration. It is intended as a practical, transparent starting point for operations-grounded LLM evaluation rather than a definitive measurement framework. Known areas for future extension include:
+
+- **Model provenance logging.** Capture provider-identifying response headers (e.g. OpenRouter's `x-provider`, response `model` field) to strengthen traceability from result to actual serving infrastructure.
+- **Additional workflows and data.** Expand beyond the current eight workflow variants with more diverse inputs (e.g. multilingual documents, larger spreadsheets, multi-page engineering drawings).
+- **Fine-tuning comparison.** Evaluate whether LoRA or full fine-tuning on a small domain-specific corpus (e.g. compliance reasoning) meaningfully shifts the score distribution vs. off-the-shelf models.
+- **Multi-rater ground truth.** Add independent second-rater validation of ground-truth labels to assess and mitigate single-author bias.
+- **Semantic matching.** Replace or supplement keyword-based scoring with embedding-similarity matching to reduce false negatives from unexpected phrasing.

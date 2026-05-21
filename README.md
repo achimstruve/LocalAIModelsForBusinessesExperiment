@@ -90,6 +90,12 @@ uv run python run_experiment.py --workflow docs --pdfs llm_finetuning_report.pdf
 
 # Override model list
 uv run python run_experiment.py --runs 10 --models meta-llama/llama-3.3-70b-instruct qwen/qwen3.5-9b
+
+# Parallel execution -- 4 combos in parallel, 0.5s delay between API calls
+uv run python run_experiment.py --runs 10 --workers 4 --delay 0.5
+
+# Fast parallel smoke test
+uv run python run_experiment.py --runs 1 --workers 8 --delay 0.2
 ```
 
 ## Outputs
@@ -148,6 +154,16 @@ agen-ops-6/
 - Hardware tier reasoning assumes **Q4 quantization**. If you use FP8/FP16, re-check VRAM requirements.
 
 For full scoring rubrics, ground-truth construction methodology, and known limitations, see [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
+
+## Status and limitations
+
+This is a **first-iteration benchmark** -- a practical starting point, not a definitive measurement framework. A few things to be upfront about:
+
+- **Model provenance is trust-based.** The harness requests models by ID from inference providers (Tensorix, OpenRouter), but there is no cryptographic verification that the weights actually served match the requested checkpoint. OpenRouter routes to downstream backends that may differ in quantization or checkpoint revision. Results should be read as "model ID X as served by provider Y on date Z."
+- **Single-author ground truth.** All ground-truth labels were created by one person. Systematic blind spots are possible.
+- **Synthetic data only.** Inputs are designed to mirror real-world complexity but may not capture the full distribution of production documents.
+
+Future iterations may add provider-response-header logging for stronger traceability, multi-rater ground truth, fine-tuning comparisons, and additional workflows and data. See [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) sections 7 and 9 for the full list of known limitations and planned extensions.
 
 ## License
 
