@@ -1,7 +1,7 @@
 [project]
-name = "agen-icp-6"
+name = "agen-ops-6"
 version = "0.4.0"
-description = "SME-AI workflow benchmark: open-model fit on commodity GPU tiers. Six ICP-grounded tasks — cert-vs-spec compliance, drawing-vs-3D reasoning, vision extraction (OCR + LLM), multilingual PDF entity extraction (with auto-OCR fallback for scanned), Gantt-spreadsheet issue detection, and spreadsheet cascade-update editing. Multi-model, multi-run, statistical aggregation."
+description = "SME-AI workflow benchmark: open-model fit on commodity GPU tiers. Six operations-grounded tasks — cert-vs-spec compliance, drawing-vs-3D reasoning, vision extraction (OCR + LLM), multilingual PDF entity extraction (with auto-OCR fallback for scanned), Gantt-spreadsheet issue detection, and spreadsheet cascade-update editing. Multi-model, multi-run, statistical aggregation."
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.40.0",

@@ -1,15 +1,15 @@
-# METHODOLOGY.md -- AGEN-ICP-6 Benchmark
+# METHODOLOGY.md -- AGEN-OPS-6 Benchmark
 
-This document describes the scoring rubrics, sampling settings, ground-truth construction methodology, intended use, and known limitations of the AGEN-ICP-6 benchmark.
+This document describes the scoring rubrics, sampling settings, ground-truth construction methodology, intended use, and known limitations of the AGEN-OPS-6 benchmark.
 
 ---
 
 ## 1. Purpose and intended use
 
-AGEN-ICP-6 measures whether open-source LLMs, served on commodity GPU hardware, can reliably perform six categories of assistive-AI tasks that small and mid-sized manufacturing / engineering firms (10--500 employees) actually need. The benchmark is designed for:
+AGEN-OPS-6 measures whether open-source LLMs, served on commodity GPU hardware, can reliably perform six categories of assistive-AI tasks that small and mid-sized manufacturing / engineering firms (10--500 employees) actually need. The benchmark is designed for:
 
 - **Procurement teams** evaluating whether a local-hosted open model can replace or augment a specific workflow before committing to hardware or SaaS spend.
-- **AI consultants** positioning model recommendations with measurable, ICP-grounded evidence rather than generic benchmark scores.
+- **AI consultants** positioning model recommendations with measurable, operations-grounded evidence rather than generic benchmark scores.
 - **Researchers** studying the gap between public leaderboard rankings and domain-specific task performance.
 
 The benchmark is **not** designed for:

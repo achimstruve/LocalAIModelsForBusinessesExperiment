@@ -120,7 +120,7 @@ For `schedule_write`: the `forbidden_row_violations` field in the raw JSON shows
 ## Project structure
 
 ```
-agen-icp-6/
+agen-ops-6/
 ├── README.md
 ├── LICENSE                    # MIT (code) + CC-BY-4.0 (data/prompts)
 ├── run_experiment.py          # The harness (multi-backend, multi-model, multi-run, 8 workflows)
