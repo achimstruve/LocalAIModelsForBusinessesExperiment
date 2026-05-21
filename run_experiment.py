@@ -4,9 +4,9 @@ SME-AI workflow benchmark — open-model fit on commodity GPU tiers.
 Tests open-source models served via the Tensorix OpenAI-compatible API on six
 synthetic / semi-synthetic SME-relevant workflows:
 
-    aa1          Material certificate compliance (text)
-    bm1          Drawing-vs-3D dimension comparison reasoning (text)
-    bm1_extract  Vision: OCR locally (EasyOCR) + LLM extracts dim+tol table
+    compliance      Material certificate compliance (text)
+    dims            Drawing-vs-3D dimension comparison reasoning (text)
+    dims_ocr        Vision: OCR locally (EasyOCR) + LLM extracts dim+tol table
 
 Models compared (all fit Tier 2 / Tier 1 hardware comfortably):
 
@@ -22,10 +22,10 @@ Setup:
     cp .env.example .env, fill in TENSORIX_API_KEY + TENSORIX_BASE_URL
 
 Run:
-    uv run python run_experiment.py                       # all workflows, all 3 models, 10 runs each
-    uv run python run_experiment.py --workflow aa1        # one workflow
-    uv run python run_experiment.py --runs 3 --workflow bm1_extract --models meta-llama/llama-3.3-70b-instruct
-    uv run python run_experiment.py --no-extract          # skip the OCR-heavy bm1_extract workflow
+    uv run python run_experiment.py                              # all workflows, all models, 10 runs each
+    uv run python run_experiment.py --workflow compliance         # one workflow
+    uv run python run_experiment.py --runs 3 --workflow dims_ocr --models meta-llama/llama-3.3-70b-instruct
+    uv run python run_experiment.py --no-extract                 # skip the OCR-heavy dims_ocr workflow
 
 Outputs:
     results/run_<timestamp>.json        full raw runs + aggregates
@@ -54,7 +54,7 @@ ROOT = Path(__file__).parent
 PROMPTS = ROOT / "prompts"
 DATA = ROOT / "data"
 RESULTS = ROOT / "results"
-OCR_CACHE = DATA / "bm1" / "ocr_cache"
+OCR_CACHE = DATA / "dims" / "ocr_cache"
 RESULTS.mkdir(exist_ok=True)
 OCR_CACHE.mkdir(exist_ok=True)
 
@@ -99,7 +99,7 @@ except ImportError:
 
 
 # Per-API-call timeout. We saw individual gpt-oss-20b runs spend 188s and 370s on
-# pdf_extract because the OpenAI SDK's default max_retries=2 turned a single timeout
+# docs because the OpenAI SDK's default max_retries=2 turned a single timeout
 # into a chain of retries. RUN_TIMEOUT_S caps each attempt; max_retries=0 on the
 # client (see ClientPool) prevents the SDK from auto-retrying; and call_model /
 # call_vlm skip the plain-text fallback if the json_object attempt hit a timeout.
@@ -248,7 +248,7 @@ _VISION_LADDER = [
     "qwen/qwen3.5-9b",                     # low downside
 ]
 
-# Direct vision-language ladder for bm1_vlm and pdf_vlm (image / page images go
+# Direct vision-language ladder for dims_vlm and docs_vlm (image / page images go
 # straight to a VLM, no OCR step). All routed via OpenRouter for consistent
 # behaviour — Tensorix's VLM hosting was silently caching and/or timing out.
 # Hardware tier annotations refer to what the model would need if SELF-HOSTED;
@@ -265,14 +265,14 @@ _VLM_LADDER = [
 ]
 
 DEFAULT_MODELS_PER_WORKFLOW: dict[str, list[str]] = {
-    "aa1":          list(_FULL_LADDER),
-    "bm1":          list(_FULL_LADDER),
-    "bm1_extract":  list(_VISION_LADDER),
-    "bm1_vlm":      list(_VLM_LADDER),
-    "pdf_extract":  list(_FULL_LADDER),
-    "pdf_vlm":      list(_VLM_LADDER),
-    "xlsx_gantt":   list(_FULL_LADDER),
-    "xlsx_modify":  list(_FULL_LADDER),
+    "compliance":     list(_FULL_LADDER),
+    "dims":           list(_FULL_LADDER),
+    "dims_ocr":       list(_VISION_LADDER),
+    "dims_vlm":       list(_VLM_LADDER),
+    "docs":           list(_FULL_LADDER),
+    "docs_vlm":       list(_VLM_LADDER),
+    "schedule_read":  list(_FULL_LADDER),
+    "schedule_write": list(_FULL_LADDER),
 }
 
 # Flat union (used when user passes --models, applied to every workflow).
@@ -398,13 +398,13 @@ def parse_json_response(text: str) -> dict:
     return json.loads(text)
 
 
-# ----------------------------- aa1 evaluator ------------------------------ #
+# ----------------------------- compliance evaluator ----------------------- #
 
-def run_aa1(client: OpenAI, model: str, temperature: float) -> dict:
-    system_prompt = (PROMPTS / "aa1_system.txt").read_text(encoding="utf-8")
-    spec = (DATA / "aa1" / "customer_spec.txt").read_text(encoding="utf-8")
-    cert = (DATA / "aa1" / "supplier_cert.txt").read_text(encoding="utf-8")
-    ground_truth = json.loads((DATA / "aa1" / "ground_truth.json").read_text(encoding="utf-8"))
+def run_compliance(client: OpenAI, model: str, temperature: float) -> dict:
+    system_prompt = (PROMPTS / "compliance_system.txt").read_text(encoding="utf-8")
+    spec = (DATA / "compliance" / "customer_spec.txt").read_text(encoding="utf-8")
+    cert = (DATA / "compliance" / "supplier_cert.txt").read_text(encoding="utf-8")
+    ground_truth = json.loads((DATA / "compliance" / "ground_truth.json").read_text(encoding="utf-8"))
 
     user_prompt = (
         "CUSTOMER SPECIFICATION:\n===================================================\n"
@@ -417,7 +417,7 @@ def run_aa1(client: OpenAI, model: str, temperature: float) -> dict:
     try:
         parsed = parse_json_response(raw)
     except Exception as e:
-        return {"workflow": "aa1", "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
+        return {"workflow": "compliance", "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
 
     flagged = parsed.get("deviations", []) if isinstance(parsed, dict) else []
 
@@ -428,6 +428,7 @@ def run_aa1(client: OpenAI, model: str, temperature: float) -> dict:
         "DEV-2": ["surface roughness", "surface finish", "ra ", " ra,", " ra(", "ra value", "0.95", "0.8 micrometre", "0.8 µm"],
         "DEV-3": ["intergranular", "a262"],
         "DEV-4": ["charpy", "impact at -196", "impact toughness"],
+        "DEV-5": ["a276-17", "a276-23", "a479-23", "superseded", "revision", "standard version", "outdated standard"],
     }
 
     flagged_normalised = [
@@ -457,7 +458,7 @@ def run_aa1(client: OpenAI, model: str, temperature: float) -> dict:
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
 
     return {
-        "workflow": "aa1",
+        "workflow": "compliance",
         "model": model,
         "temperature": temperature,
         "metadata": meta,
@@ -474,18 +475,18 @@ def run_aa1(client: OpenAI, model: str, temperature: float) -> dict:
     }
 
 
-# ----------------------------- bm1 evaluator ------------------------------ #
+# ----------------------------- dims evaluator ------------------------------ #
 
 def load_csv(path: Path) -> list[dict]:
     with path.open() as f:
         return list(csv.DictReader(f))
 
 
-def run_bm1(client: OpenAI, model: str, temperature: float) -> dict:
-    system_prompt = (PROMPTS / "bm1_system.txt").read_text(encoding="utf-8")
-    drawing = load_csv(DATA / "bm1" / "drawing_dims.csv")
-    model_dims = load_csv(DATA / "bm1" / "model_dims.csv")
-    ground_truth = json.loads((DATA / "bm1" / "ground_truth.json").read_text(encoding="utf-8"))
+def run_dims(client: OpenAI, model: str, temperature: float) -> dict:
+    system_prompt = (PROMPTS / "dims_system.txt").read_text(encoding="utf-8")
+    drawing = load_csv(DATA / "dims" / "drawing_dims.csv")
+    model_dims = load_csv(DATA / "dims" / "model_dims.csv")
+    ground_truth = json.loads((DATA / "dims" / "ground_truth.json").read_text(encoding="utf-8"))
 
     drawing_table = "DRAWING DIMENSIONS (extracted from 2D drawing):\ndim_id | feature | nominal_value | tolerance_plus | tolerance_minus\n"
     for r in drawing:
@@ -502,7 +503,7 @@ def run_bm1(client: OpenAI, model: str, temperature: float) -> dict:
     try:
         parsed = parse_json_response(raw)
     except Exception as e:
-        return {"workflow": "bm1", "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
+        return {"workflow": "dims", "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
 
     flagged = parsed.get("flagged_dimensions", []) if isinstance(parsed, dict) else []
     flagged_ids = sorted({f.get("dim_id", "") for f in flagged if isinstance(f, dict)})
@@ -517,7 +518,7 @@ def run_bm1(client: OpenAI, model: str, temperature: float) -> dict:
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
 
     return {
-        "workflow": "bm1",
+        "workflow": "dims",
         "model": model,
         "temperature": temperature,
         "metadata": meta,
@@ -533,7 +534,7 @@ def run_bm1(client: OpenAI, model: str, temperature: float) -> dict:
     }
 
 
-# ---------------------- bm1_extract evaluator ----------------------------- #
+# ---------------------- dims_ocr evaluator -------------------------------- #
 
 _OCR_READER = None
 
@@ -655,16 +656,16 @@ def _match_dim(extracted: dict, gt: dict, value_eps: float, tol_eps: float) -> b
     return True
 
 
-def run_bm1_extract(client: OpenAI, model: str, temperature: float, drawing_name: str) -> dict:
-    drawing_path = DATA / "bm1" / drawing_name
-    gt_path = DATA / "bm1" / f"{drawing_path.stem}_ground_truth.json"
+def run_dims_ocr(client: OpenAI, model: str, temperature: float, drawing_name: str) -> dict:
+    drawing_path = DATA / "dims" / drawing_name
+    gt_path = DATA / "dims" / f"{drawing_path.stem}_ground_truth.json"
     if not drawing_path.is_file() or not gt_path.is_file():
-        return {"workflow": "bm1_extract", "drawing": drawing_name, "model": model, "error": "drawing or GT file missing"}
+        return {"workflow": "dims_ocr", "drawing": drawing_name, "model": model, "error": "drawing or GT file missing"}
 
     ground_truth = json.loads(gt_path.read_text(encoding="utf-8"))
     ocr_items = ocr_drawing(drawing_path)
 
-    system_prompt = (PROMPTS / "bm1_extract_system.txt").read_text(encoding="utf-8")
+    system_prompt = (PROMPTS / "dims_ocr_system.txt").read_text(encoding="utf-8")
 
     ocr_text_block = "OCR OUTPUT (text, position, confidence) from the drawing image:\n"
     ocr_text_block += "idx | text | x_min | y_min | x_max | y_max | conf\n"
@@ -687,7 +688,7 @@ def run_bm1_extract(client: OpenAI, model: str, temperature: float, drawing_name
     try:
         parsed = parse_json_response(raw)
     except Exception as e:
-        return {"workflow": "bm1_extract", "drawing": drawing_name, "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
+        return {"workflow": "dims_ocr", "drawing": drawing_name, "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
 
     extracted = parsed.get("extracted_dimensions", []) if isinstance(parsed, dict) else []
     gt_dims = ground_truth.get("expected_dimensions", [])
@@ -715,7 +716,7 @@ def run_bm1_extract(client: OpenAI, model: str, temperature: float, drawing_name
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
 
     return {
-        "workflow": "bm1_extract",
+        "workflow": "dims_ocr",
         "drawing": drawing_name,
         "model": model,
         "temperature": temperature,
@@ -741,11 +742,11 @@ def run_bm1_extract(client: OpenAI, model: str, temperature: float, drawing_name
 
 # ---------------------- PDF extraction (native + OCR fallback) ----------- #
 
-PDF_TEXT_CACHE = DATA / "pdf_extract" / "text_cache"
+PDF_TEXT_CACHE = DATA / "docs" / "text_cache"
 PDF_TEXT_CACHE.mkdir(parents=True, exist_ok=True)
 
 
-# ---------------------- bm1_vlm (direct image → vision model) ------------ #
+# ---------------------- dims_vlm (direct image → vision model) ------------ #
 
 def _image_to_data_url(path: Path) -> str:
     """Read a JPEG/PNG image and return an OpenAI-compatible data: URL."""
@@ -759,8 +760,8 @@ def _image_to_data_url(path: Path) -> str:
 def call_vlm(client: OpenAI, model: str, system_prompt: str, user_text: str, image_paths: Path | list[Path], temperature: float) -> tuple[str, dict]:
     """Vision-model variant of call_model. Sends the system prompt as text and the
     user prompt as a (text + image_url[, image_url, ...]) multipart message. Accepts
-    either a single Path (single-image, e.g. bm1_vlm) or a list of Paths (multi-image,
-    e.g. pdf_vlm with one image per PDF page). Same retry-on-no-JSON semantics as call_model."""
+    either a single Path (single-image, e.g. dims_vlm) or a list of Paths (multi-image,
+    e.g. docs_vlm with one image per PDF page). Same retry-on-no-JSON semantics as call_model."""
     metadata: dict = {"attempts": []}
     if isinstance(image_paths, Path):
         image_paths = [image_paths]
@@ -813,14 +814,14 @@ def call_vlm(client: OpenAI, model: str, system_prompt: str, user_text: str, ima
     return resp.choices[0].message.content, metadata
 
 
-def run_bm1_vlm(client: OpenAI, model: str, temperature: float, drawing_name: str) -> dict:
-    drawing_path = DATA / "bm1" / drawing_name
-    gt_path = DATA / "bm1" / f"{drawing_path.stem}_ground_truth.json"
+def run_dims_vlm(client: OpenAI, model: str, temperature: float, drawing_name: str) -> dict:
+    drawing_path = DATA / "dims" / drawing_name
+    gt_path = DATA / "dims" / f"{drawing_path.stem}_ground_truth.json"
     if not drawing_path.is_file() or not gt_path.is_file():
-        return {"workflow": "bm1_vlm", "drawing": drawing_name, "model": model, "error": "drawing or GT file missing"}
+        return {"workflow": "dims_vlm", "drawing": drawing_name, "model": model, "error": "drawing or GT file missing"}
 
     ground_truth = json.loads(gt_path.read_text(encoding="utf-8"))
-    system_prompt = (PROMPTS / "bm1_vlm_system.txt").read_text(encoding="utf-8")
+    system_prompt = (PROMPTS / "dims_vlm_system.txt").read_text(encoding="utf-8")
 
     # Per-call salt — appended to the user message to defeat any provider-side
     # response cache that hashes on prompt text rather than honouring the seed.
@@ -846,7 +847,7 @@ def run_bm1_vlm(client: OpenAI, model: str, temperature: float, drawing_name: st
     try:
         parsed = parse_json_response(raw)
     except Exception as e:
-        return {"workflow": "bm1_vlm", "drawing": drawing_name, "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
+        return {"workflow": "dims_vlm", "drawing": drawing_name, "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
 
     extracted = parsed.get("extracted_dimensions", []) if isinstance(parsed, dict) else []
     gt_dims = ground_truth.get("expected_dimensions", [])
@@ -873,7 +874,7 @@ def run_bm1_vlm(client: OpenAI, model: str, temperature: float, drawing_name: st
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
 
     return {
-        "workflow": "bm1_vlm",
+        "workflow": "dims_vlm",
         "drawing": drawing_name,
         "model": model,
         "temperature": temperature,
@@ -894,9 +895,9 @@ def run_bm1_vlm(client: OpenAI, model: str, temperature: float, drawing_name: st
     }
 
 
-# ---------------------- PDF VLM (direct page images → vision model) ------ #
+# ---------------------- docs_vlm (direct page images → vision model) ----- #
 
-PDF_PAGE_CACHE = DATA / "pdf_extract" / "page_cache"
+PDF_PAGE_CACHE = DATA / "docs" / "page_cache"
 PDF_PAGE_CACHE.mkdir(parents=True, exist_ok=True)
 
 
@@ -927,23 +928,23 @@ def _render_pdf_pages_to_pngs(pdf_path: Path, dpi: int = 150) -> list[Path]:
     return out
 
 
-def run_pdf_vlm(client: OpenAI, model: str, temperature: float, pdf_name: str) -> dict:
-    pdf_path = DATA / "pdf_extract" / pdf_name
-    gt_path = DATA / "pdf_extract" / f"{pdf_path.stem}_ground_truth.json"
+def run_docs_vlm(client: OpenAI, model: str, temperature: float, pdf_name: str) -> dict:
+    pdf_path = DATA / "docs" / pdf_name
+    gt_path = DATA / "docs" / f"{pdf_path.stem}_ground_truth.json"
     if not pdf_path.is_file() or not gt_path.is_file():
-        return {"workflow": "pdf_vlm", "pdf": pdf_name, "model": model, "error": "PDF or GT file missing"}
+        return {"workflow": "docs_vlm", "pdf": pdf_name, "model": model, "error": "PDF or GT file missing"}
 
     ground_truth = json.loads(gt_path.read_text(encoding="utf-8"))
 
     try:
         page_images = _render_pdf_pages_to_pngs(pdf_path)
     except Exception as e:
-        return {"workflow": "pdf_vlm", "pdf": pdf_name, "model": model, "error": f"PDF page render failed: {e}"}
+        return {"workflow": "docs_vlm", "pdf": pdf_name, "model": model, "error": f"PDF page render failed: {e}"}
 
     if not page_images:
-        return {"workflow": "pdf_vlm", "pdf": pdf_name, "model": model, "error": "PDF has no renderable pages"}
+        return {"workflow": "docs_vlm", "pdf": pdf_name, "model": model, "error": "PDF has no renderable pages"}
 
-    system_prompt = (PROMPTS / "pdf_vlm_system.txt").read_text(encoding="utf-8")
+    system_prompt = (PROMPTS / "docs_vlm_system.txt").read_text(encoding="utf-8")
     nonce = f"req-{int(time.time()*1_000_000) & 0xFFFFFFFF:08x}"
     user_text = (
         f"Document file name (for context): {pdf_name}\n"
@@ -962,7 +963,7 @@ def run_pdf_vlm(client: OpenAI, model: str, temperature: float, pdf_name: str) -
     try:
         parsed = parse_json_response(raw)
     except Exception as e:
-        return {"workflow": "pdf_vlm", "pdf": pdf_name, "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
+        return {"workflow": "docs_vlm", "pdf": pdf_name, "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
 
     extracted = parsed.get("entities", []) if isinstance(parsed, dict) else []
 
@@ -993,7 +994,7 @@ def run_pdf_vlm(client: OpenAI, model: str, temperature: float, pdf_name: str) -
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
 
     return {
-        "workflow": "pdf_vlm",
+        "workflow": "docs_vlm",
         "pdf": pdf_name,
         "model": model,
         "temperature": temperature,
@@ -1065,20 +1066,20 @@ def _extract_pdf_text(pdf_path: Path) -> tuple[str, str]:
     return ocr_text, "ocr"
 
 
-def run_pdf_extract(client: OpenAI, model: str, temperature: float, pdf_name: str) -> dict:
-    pdf_path = DATA / "pdf_extract" / pdf_name
-    gt_path = DATA / "pdf_extract" / f"{pdf_path.stem}_ground_truth.json"
+def run_docs(client: OpenAI, model: str, temperature: float, pdf_name: str) -> dict:
+    pdf_path = DATA / "docs" / pdf_name
+    gt_path = DATA / "docs" / f"{pdf_path.stem}_ground_truth.json"
     if not pdf_path.is_file() or not gt_path.is_file():
-        return {"workflow": "pdf_extract", "pdf": pdf_name, "model": model, "error": "PDF or GT file missing"}
+        return {"workflow": "docs", "pdf": pdf_name, "model": model, "error": "PDF or GT file missing"}
 
     ground_truth = json.loads(gt_path.read_text(encoding="utf-8"))
 
     try:
         text, mode = _extract_pdf_text(pdf_path)
     except Exception as e:
-        return {"workflow": "pdf_extract", "pdf": pdf_name, "model": model, "error": f"PDF extraction failed: {e}"}
+        return {"workflow": "docs", "pdf": pdf_name, "model": model, "error": f"PDF extraction failed: {e}"}
 
-    system_prompt = (PROMPTS / "pdf_extract_system.txt").read_text(encoding="utf-8")
+    system_prompt = (PROMPTS / "docs_system.txt").read_text(encoding="utf-8")
     user_prompt = (
         f"Document file name (for context): {pdf_name}\n"
         f"Extraction mode (for context): {mode}\n\n"
@@ -1090,7 +1091,7 @@ def run_pdf_extract(client: OpenAI, model: str, temperature: float, pdf_name: st
     try:
         parsed = parse_json_response(raw)
     except Exception as e:
-        return {"workflow": "pdf_extract", "pdf": pdf_name, "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
+        return {"workflow": "docs", "pdf": pdf_name, "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
 
     extracted = parsed.get("entities", []) if isinstance(parsed, dict) else []
 
@@ -1124,7 +1125,7 @@ def run_pdf_extract(client: OpenAI, model: str, temperature: float, pdf_name: st
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
 
     return {
-        "workflow": "pdf_extract",
+        "workflow": "docs",
         "pdf": pdf_name,
         "model": model,
         "temperature": temperature,
@@ -1146,7 +1147,7 @@ def run_pdf_extract(client: OpenAI, model: str, temperature: float, pdf_name: st
     }
 
 
-# ---------------------- xlsx_gantt (spreadsheet read) -------------------- #
+# ---------------------- schedule_read (spreadsheet read) ----------------- #
 
 def _read_xlsx_as_table(path: Path) -> list[dict]:
     try:
@@ -1165,19 +1166,19 @@ def _read_xlsx_as_table(path: Path) -> list[dict]:
     return out
 
 
-def run_xlsx_gantt(client: OpenAI, model: str, temperature: float) -> dict:
-    sheet_path = DATA / "xlsx_gantt" / "timeline.xlsx"
-    gt_path = DATA / "xlsx_gantt" / "ground_truth.json"
+def run_schedule_read(client: OpenAI, model: str, temperature: float) -> dict:
+    sheet_path = DATA / "schedule_read" / "timeline.xlsx"
+    gt_path = DATA / "schedule_read" / "ground_truth.json"
     if not sheet_path.is_file() or not gt_path.is_file():
-        return {"workflow": "xlsx_gantt", "model": model, "error": "spreadsheet or GT missing"}
+        return {"workflow": "schedule_read", "model": model, "error": "spreadsheet or GT missing"}
 
     table = _read_xlsx_as_table(sheet_path)
     ground_truth = json.loads(gt_path.read_text(encoding="utf-8"))
 
-    system_prompt = (PROMPTS / "xlsx_gantt_system.txt").read_text(encoding="utf-8")
+    system_prompt = (PROMPTS / "schedule_read_system.txt").read_text(encoding="utf-8")
 
     if not table:
-        return {"workflow": "xlsx_gantt", "model": model, "error": "spreadsheet is empty"}
+        return {"workflow": "schedule_read", "model": model, "error": "spreadsheet is empty"}
     headers = list(table[0].keys())
     text = " | ".join(headers) + "\n"
     for r in table:
@@ -1193,7 +1194,7 @@ def run_xlsx_gantt(client: OpenAI, model: str, temperature: float) -> dict:
     try:
         parsed = parse_json_response(raw)
     except Exception as e:
-        return {"workflow": "xlsx_gantt", "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
+        return {"workflow": "schedule_read", "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
 
     flagged = parsed.get("issues", []) if isinstance(parsed, dict) else []
     flagged_blob = [
@@ -1232,7 +1233,7 @@ def run_xlsx_gantt(client: OpenAI, model: str, temperature: float) -> dict:
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
 
     return {
-        "workflow": "xlsx_gantt",
+        "workflow": "schedule_read",
         "model": model,
         "temperature": temperature,
         "metadata": meta,
@@ -1252,18 +1253,18 @@ def run_xlsx_gantt(client: OpenAI, model: str, temperature: float) -> dict:
     }
 
 
-# ---------------------- xlsx_modify (spreadsheet write) ------------------ #
+# ---------------------- schedule_write (spreadsheet write) --------------- #
 
-def run_xlsx_modify(client: OpenAI, model: str, temperature: float) -> dict:
-    base_path = DATA / "xlsx_modify" / "timeline_baseline.xlsx"
-    scenario_path = DATA / "xlsx_modify" / "scenario.txt"
-    gt_path = DATA / "xlsx_modify" / "ground_truth.json"
+def run_schedule_write(client: OpenAI, model: str, temperature: float) -> dict:
+    base_path = DATA / "schedule_write" / "timeline_baseline.xlsx"
+    scenario_path = DATA / "schedule_write" / "scenario.txt"
+    gt_path = DATA / "schedule_write" / "ground_truth.json"
     if not all(p.is_file() for p in (base_path, scenario_path, gt_path)):
-        return {"workflow": "xlsx_modify", "model": model, "error": "baseline / scenario / GT file missing"}
+        return {"workflow": "schedule_write", "model": model, "error": "baseline / scenario / GT file missing"}
 
     table = _read_xlsx_as_table(base_path)
     if not table:
-        return {"workflow": "xlsx_modify", "model": model, "error": "baseline spreadsheet empty"}
+        return {"workflow": "schedule_write", "model": model, "error": "baseline spreadsheet empty"}
     scenario = scenario_path.read_text(encoding="utf-8")
     ground_truth = json.loads(gt_path.read_text(encoding="utf-8"))
 
@@ -1272,7 +1273,7 @@ def run_xlsx_modify(client: OpenAI, model: str, temperature: float) -> dict:
     for r in table:
         text += " | ".join(str(r.get(h, "")) for h in headers) + "\n"
 
-    system_prompt = (PROMPTS / "xlsx_modify_system.txt").read_text(encoding="utf-8")
+    system_prompt = (PROMPTS / "schedule_write_system.txt").read_text(encoding="utf-8")
     user_prompt = (
         "CURRENT GANTT TIMELINE (pipe-delimited):\n"
         f"{text}\n\n"
@@ -1285,7 +1286,7 @@ def run_xlsx_modify(client: OpenAI, model: str, temperature: float) -> dict:
     try:
         parsed = parse_json_response(raw)
     except Exception as e:
-        return {"workflow": "xlsx_modify", "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
+        return {"workflow": "schedule_write", "model": model, "raw_output": raw, "error": f"JSON parse failed: {e}", "metadata": meta}
 
     edits = parsed.get("edits", []) if isinstance(parsed, dict) else []
 
@@ -1335,7 +1336,7 @@ def run_xlsx_modify(client: OpenAI, model: str, temperature: float) -> dict:
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
 
     return {
-        "workflow": "xlsx_modify",
+        "workflow": "schedule_write",
         "model": model,
         "temperature": temperature,
         "metadata": meta,
@@ -1492,16 +1493,16 @@ def short_model(m: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tensorix mini-experiment runner — multi-model, multi-run, statistical aggregation.")
-    parser.add_argument("--workflow", choices=["aa1", "bm1", "bm1_extract", "bm1_vlm", "pdf_extract", "pdf_vlm", "xlsx_gantt", "xlsx_modify", "all"], default="all")
+    parser.add_argument("--workflow", choices=["compliance", "dims", "dims_ocr", "dims_vlm", "docs", "docs_vlm", "schedule_read", "schedule_write", "all"], default="all")
     parser.add_argument("--models", nargs="+", default=None,
                         help="Model ids to compare. If omitted, uses per-workflow defaults: "
-                             "text workflows → full Tensorix ladder; bm1_extract → vision ladder; "
-                             "bm1_vlm / pdf_vlm → OpenRouter VLM ladder.")
+                             "text workflows → full Tensorix ladder; dims_ocr → vision ladder; "
+                             "dims_vlm / docs_vlm → OpenRouter VLM ladder.")
     parser.add_argument("--runs", type=int, default=10, help="Runs per (workflow, model[, drawing]) combination.")
     parser.add_argument("--temperature", type=float, default=0.1)
-    parser.add_argument("--drawings", nargs="+", default=["technical-drawing-1.jpg", "technical-drawing-2.jpg", "technical-drawing-3.jpg", "technical-drawing-4.jpg", "technical-drawing-5.jpg", "technical-drawing-6.jpg"], help="Drawings for bm1_extract / bm1_vlm.")
-    parser.add_argument("--pdfs", nargs="+", default=["llm_finetuning_report.pdf", "llm_finetuning_report_scanned.pdf", "llm_finetuning_report_image.pdf"], help="PDFs for pdf_extract / pdf_vlm.")
-    parser.add_argument("--no-extract", action="store_true", help="Skip the bm1_extract workflow (which needs EasyOCR).")
+    parser.add_argument("--drawings", nargs="+", default=["technical-drawing-1.jpg", "technical-drawing-2.jpg", "technical-drawing-3.jpg", "technical-drawing-4.jpg", "technical-drawing-5.jpg", "technical-drawing-6.jpg"], help="Drawings for dims_ocr / dims_vlm.")
+    parser.add_argument("--pdfs", nargs="+", default=["llm_finetuning_report.pdf", "llm_finetuning_report_scanned.pdf", "llm_finetuning_report_image.pdf"], help="PDFs for docs / docs_vlm.")
+    parser.add_argument("--no-extract", action="store_true", help="Skip the dims_ocr workflow (which needs EasyOCR).")
     parser.add_argument("--no-save", action="store_true")
     parser.add_argument("--clear-cache", action="store_true",
                         help="Delete OCR + PDF text + PDF page caches at start of run, forcing re-OCR / re-parse / re-render. "
@@ -1527,17 +1528,17 @@ def main() -> None:
 
     workflows: list[str]
     if args.workflow == "all":
-        workflows = ["aa1", "bm1", "pdf_extract", "xlsx_gantt", "xlsx_modify"]
+        workflows = ["compliance", "dims", "docs", "schedule_read", "schedule_write"]
         if not args.no_extract:
-            workflows.insert(2, "bm1_extract")
+            workflows.insert(2, "dims_ocr")
         # VLM workflows only included automatically if OpenRouter is configured
         # (Tensorix doesn't carry a fits-our-hardware VLM, so OpenRouter is the only path).
         if os.environ.get("OPENROUTER_API_KEY"):
             insert_at = 3 if not args.no_extract else 2
-            workflows.insert(insert_at, "bm1_vlm")
-            # pdf_vlm goes right after pdf_extract for symmetric grouping
-            pdf_extract_idx = workflows.index("pdf_extract")
-            workflows.insert(pdf_extract_idx + 1, "pdf_vlm")
+            workflows.insert(insert_at, "dims_vlm")
+            # docs_vlm goes right after docs for symmetric grouping
+            docs_idx = workflows.index("docs")
+            workflows.insert(docs_idx + 1, "docs_vlm")
     else:
         workflows = [args.workflow]
 
@@ -1567,9 +1568,9 @@ def main() -> None:
 
     def _combo_count(wf: str) -> int:
         n = len(models_for(wf))
-        if wf in ("bm1_extract", "bm1_vlm"):
+        if wf in ("dims_ocr", "dims_vlm"):
             return n * len(args.drawings)
-        if wf in ("pdf_extract", "pdf_vlm"):
+        if wf in ("docs", "docs_vlm"):
             return n * len(args.pdfs)
         return n
 
@@ -1588,22 +1589,22 @@ def main() -> None:
     }
 
     workflow_meta = {
-        "aa1": {"name": "aa1 — Material certificate compliance",
-                "description": "Synthetic spec + cert with 4 deliberate deviations."},
-        "bm1": {"name": "bm1 — Drawing-vs-3D dimension comparison reasoning",
-                "description": "25 dimensions; 9 must flag at the 10% tolerance-band rule."},
-        "bm1_extract": {"name": "bm1_extract — Vision extraction (EasyOCR + LLM hybrid)",
-                        "description": "Local EasyOCR + LLM consolidates dim+tolerance table."},
-        "bm1_vlm":     {"name": "bm1_vlm — Direct vision extraction (VLM, no OCR)",
-                        "description": "Drawing image sent directly to a vision-language model. Tests off-the-shelf VLM upper bound before fine-tuning."},
-        "pdf_extract": {"name": "PDF — Structured extraction with native + OCR fallback",
-                        "description": "PyMuPDF + EasyOCR fallback; LLM consolidates entities."},
-        "pdf_vlm":     {"name": "PDF — Direct vision extraction (VLM, no OCR)",
-                        "description": "PDF pages rendered to PNG and sent directly to a vision-language model. Tests off-the-shelf VLM upper bound on mixed native + scanned docs."},
-        "xlsx_gantt":  {"name": "xlsx_gantt — Spreadsheet read: detect scheduling issues",
-                        "description": "Project Gantt timeline with 4 deliberately-injected issues."},
-        "xlsx_modify": {"name": "xlsx_modify — Spreadsheet write: propose cascade-update edits",
-                        "description": "Clean Gantt baseline plus a written delay scenario."},
+        "compliance":     {"name": "compliance — Material certificate compliance",
+                           "description": "Synthetic spec + cert with 5 deliberate deviations + 1 borderline trap."},
+        "dims":           {"name": "dims — Drawing-vs-3D dimension comparison reasoning",
+                           "description": "25 dimensions; 9 must flag at the 10% tolerance-band rule."},
+        "dims_ocr":       {"name": "dims_ocr — Vision extraction (EasyOCR + LLM hybrid)",
+                           "description": "Local EasyOCR + LLM consolidates dim+tolerance table."},
+        "dims_vlm":       {"name": "dims_vlm — Direct vision extraction (VLM, no OCR)",
+                           "description": "Drawing image sent directly to a vision-language model. Tests off-the-shelf VLM upper bound before fine-tuning."},
+        "docs":           {"name": "docs — Structured extraction with native + OCR fallback",
+                           "description": "PyMuPDF + EasyOCR fallback; LLM consolidates entities."},
+        "docs_vlm":       {"name": "docs_vlm — Direct vision extraction (VLM, no OCR)",
+                           "description": "PDF pages rendered to PNG and sent directly to a vision-language model. Tests off-the-shelf VLM upper bound on mixed native + scanned docs."},
+        "schedule_read":  {"name": "schedule_read — Spreadsheet read: detect scheduling issues",
+                           "description": "Project Gantt timeline with 4 deliberately-injected issues."},
+        "schedule_write": {"name": "schedule_write — Spreadsheet write: propose cascade-update edits",
+                           "description": "Clean Gantt baseline plus a supplier-delay email scenario."},
     }
 
     for wf in workflows:
@@ -1615,9 +1616,9 @@ def main() -> None:
         report["workflows"][wf] = wf_block
 
         wf_models = models_for(wf)
-        if wf in ("bm1_extract", "bm1_vlm"):
+        if wf in ("dims_ocr", "dims_vlm"):
             combos = [(model, item) for model in wf_models for item in args.drawings]
-        elif wf in ("pdf_extract", "pdf_vlm"):
+        elif wf in ("docs", "docs_vlm"):
             combos = [(model, item) for model in wf_models for item in args.pdfs]
         else:
             combos = [(model, None) for model in wf_models]
@@ -1633,22 +1634,22 @@ def main() -> None:
                 run_t0 = time.time()
                 try:
                     client = pool.get(model)
-                    if wf == "aa1":
-                        result = run_aa1(client, model, args.temperature)
-                    elif wf == "bm1":
-                        result = run_bm1(client, model, args.temperature)
-                    elif wf == "bm1_extract":
-                        result = run_bm1_extract(client, model, args.temperature, item or "")
-                    elif wf == "bm1_vlm":
-                        result = run_bm1_vlm(client, model, args.temperature, item or "")
-                    elif wf == "pdf_extract":
-                        result = run_pdf_extract(client, model, args.temperature, item or "")
-                    elif wf == "pdf_vlm":
-                        result = run_pdf_vlm(client, model, args.temperature, item or "")
-                    elif wf == "xlsx_gantt":
-                        result = run_xlsx_gantt(client, model, args.temperature)
-                    elif wf == "xlsx_modify":
-                        result = run_xlsx_modify(client, model, args.temperature)
+                    if wf == "compliance":
+                        result = run_compliance(client, model, args.temperature)
+                    elif wf == "dims":
+                        result = run_dims(client, model, args.temperature)
+                    elif wf == "dims_ocr":
+                        result = run_dims_ocr(client, model, args.temperature, item or "")
+                    elif wf == "dims_vlm":
+                        result = run_dims_vlm(client, model, args.temperature, item or "")
+                    elif wf == "docs":
+                        result = run_docs(client, model, args.temperature, item or "")
+                    elif wf == "docs_vlm":
+                        result = run_docs_vlm(client, model, args.temperature, item or "")
+                    elif wf == "schedule_read":
+                        result = run_schedule_read(client, model, args.temperature)
+                    elif wf == "schedule_write":
+                        result = run_schedule_write(client, model, args.temperature)
                     else:
                         result = {"workflow": wf, "model": model, "error": f"unknown workflow {wf}"}
                 except Exception as e:
@@ -1698,8 +1699,8 @@ def main() -> None:
             combo_record = {
                 "workflow": wf,
                 "model": model,
-                "drawing": item if wf in ("bm1_extract", "bm1_vlm") else None,
-                "pdf":     item if wf in ("pdf_extract", "pdf_vlm")  else None,
+                "drawing": item if wf in ("dims_ocr", "dims_vlm") else None,
+                "pdf":     item if wf in ("docs", "docs_vlm")  else None,
                 "aggregate": agg,
                 "runs": runs,
             }

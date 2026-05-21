@@ -15,7 +15,7 @@ before processing the material into production.
 MATERIAL DESIGNATION
 --------------------
 Material:                 AISI 316L stainless steel
-Standard reference:       ASTM A276 / ASTM A479
+Standard reference:       ASTM A276-23a / ASTM A479-23a
 Heat treatment condition: Solution annealed
 
 MECHANICAL REQUIREMENTS (at room temperature)

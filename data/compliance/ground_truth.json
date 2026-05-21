@@ -1,5 +1,5 @@
 {
-  "workflow": "aa1",
+  "workflow": "compliance",
   "scenario": "Material certificate compliance — synthetic test case",
   "expected_deviations": [
     {
@@ -37,6 +37,15 @@
       "severity": "fail",
       "must_be_flagged": true,
       "rationale": "Below minimum impact toughness for cryogenic service."
+    },
+    {
+      "id": "DEV-5",
+      "field": "Standard revision",
+      "spec_requirement": "ASTM A276-23a / ASTM A479-23a",
+      "cert_value": "ASTM A276-17",
+      "severity": "fail",
+      "must_be_flagged": true,
+      "rationale": "Certificate references a superseded standard revision (2017) while the specification requires the 2023a revision. A479 is not referenced at all."
     }
   ],
   "expected_no_deviations": [
@@ -47,7 +56,7 @@
     "Solution annealing temperature",
     "Cooling rate",
     "Carbon content",
-    "Manganese content",
+    "Manganese content (trap: cert value 1.98% is close to spec max 2.00% but within limit — must NOT be flagged)",
     "Phosphorus content",
     "Sulfur content",
     "Silicon content",
@@ -61,8 +70,8 @@
     "Metallurgist signature"
   ],
   "scoring": {
-    "total_deviations_to_catch": 4,
+    "total_deviations_to_catch": 5,
     "total_compliant_fields_to_not_falsely_flag": 19,
-    "passing_threshold": "Catch all 4 deviations with 0 false positives = strong pass; catch >=3/4 with <=1 false positive = pass; otherwise weak/fail."
+    "passing_threshold": "Catch all 5 deviations with 0 false positives = strong pass; catch >=4/5 with <=1 false positive = pass; otherwise weak/fail."
   }
 }

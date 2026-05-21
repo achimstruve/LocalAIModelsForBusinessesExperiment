@@ -17,9 +17,9 @@ build/
 results/
 
 # OCR / page caches (large, machine-specific)
-data/bm1/ocr_cache/
-data/pdf_extract/text_cache/
-data/pdf_extract/page_cache/
+data/dims/ocr_cache/
+data/docs/text_cache/
+data/docs/page_cache/
 
 # Legacy personal/legal PDFs (deleted; keep rule as safety net)
 data/*.pdf

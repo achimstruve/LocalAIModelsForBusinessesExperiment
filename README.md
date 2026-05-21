@@ -12,25 +12,29 @@ This experiment bridges that gap with six task types drawn from real ICP (Ideal 
 
 | Workflow | Real-world analog | What it tests |
 |---|---|---|
-| `aa1` | Quality engineer comparing an incoming material certificate against a customer specification | Multi-attribute compliance reasoning, tolerance logic, structured flag-with-justification output |
-| `bm1` | Production engineer cross-checking drawn dimensions against CAM-extracted dims | Tabular comparison, 10%-tolerance-band rule, false-positive cost awareness |
-| `bm1_extract` | Same engineer extracting a dim+tol table from a drawing without retyping | OCR + VLM grounding, table reconstruction, units/tolerance-frame parsing |
-| `pdf_extract` | Operations manager pulling structured fields out of a mixed pile of PDFs (English native + German scanned) | OCR fallback, multilingual NER, schema-conformant JSON output |
-| `xlsx_gantt` | PM scanning a project plan for issues humans miss | Spreadsheet ingestion, multi-row dependency reasoning |
-| `xlsx_modify` | PM updating a plan after a supplier delay, with cascade propagation | Multi-cell coordinated write, protected-region awareness |
+| `compliance` | Quality engineer comparing an incoming material certificate against a customer specification | Multi-attribute compliance reasoning, tolerance logic, structured flag-with-justification output |
+| `dims` | Production engineer cross-checking drawn dimensions against CAM-extracted dims | Tabular comparison, 10%-tolerance-band rule, false-positive cost awareness |
+| `dims_ocr` | Same engineer extracting a dim+tol table from a drawing without retyping | OCR + VLM grounding, table reconstruction, units/tolerance-frame parsing |
+| `docs` | Operations manager pulling structured fields out of a mixed pile of PDFs (English native + German scanned) | OCR fallback, multilingual NER, schema-conformant JSON output |
+| `schedule_read` | PM scanning a project plan for issues humans miss | Spreadsheet ingestion, multi-row dependency reasoning |
+| `schedule_write` | PM updating a plan after a supplier delay, with cascade propagation | Multi-cell coordinated write, protected-region awareness |
 
 Coverage: text/data, image/vision, PDF (native + scanned OCR), spreadsheet read, spreadsheet write.
 
 ## Model ladder
+
+**Text workflows** (compliance, dims, docs, schedule_read, schedule_write):
 
 | Model | Size | Hardware tier (Q4 inference) |
 |---|---|---|
 | `openai/gpt-oss-120b` | 120B MoE | Tier 2 (~60 GB VRAM) |
 | `qwen/qwen-2.5-72b-instruct` | 72B | Tier 1+ (~40 GB) |
 | `meta-llama/llama-3.3-70b-instruct` | 70B | Tier 1+ (~40 GB) |
-| `qwen/qwen-2.5-coder-32b-instruct` | 32B | Tier 0.5 (~20 GB) |
+| `z-ai/glm-5.1` | ? (unverified) | Tier 1+ |
 | `openai/gpt-oss-20b` | 20B | Tier 0.5 (~12 GB) |
 | `qwen/qwen3.5-9b` | 9B | Tier 0 (~6 GB) |
+
+**Vision workflows** (dims_vlm, docs_vlm) use a separate VLM ladder routed via OpenRouter -- see `run_experiment.py` for the full list.
 
 **Hardware tiers:**
 
@@ -77,12 +81,12 @@ uv run python run_experiment.py --runs 1
 # Full statistical run -- 10 runs per combination (~640 LLM calls, 60-120 minutes)
 uv run python run_experiment.py --runs 10
 
-# Skip OCR-heavy bm1_extract (text + PDF + xlsx workflows only)
+# Skip OCR-heavy dims_ocr (text + PDF + xlsx workflows only)
 uv run python run_experiment.py --runs 10 --no-extract
 
 # Single workflow
-uv run python run_experiment.py --workflow xlsx_modify --runs 10
-uv run python run_experiment.py --workflow pdf_extract --pdfs llm_finetuning_report.pdf llm_finetuning_report_scanned.pdf --runs 5
+uv run python run_experiment.py --workflow schedule_write --runs 10
+uv run python run_experiment.py --workflow docs --pdfs llm_finetuning_report.pdf llm_finetuning_report_scanned.pdf --runs 5
 
 # Override model list
 uv run python run_experiment.py --runs 10 --models meta-llama/llama-3.3-70b-instruct qwen/qwen3.5-9b
@@ -111,25 +115,28 @@ Each run produces:
 - Both >= 0.70 -- **pass** (feasible with attention to false-positive triage)
 - Either < 0.70 -- **weak / fail** (needs prompt iteration or a different model)
 
-For `xlsx_modify`: the `forbidden_row_violations` field in the raw JSON shows whether the model touched rows it was told not to -- a real-world risk signal even if precision/recall look fine.
+For `schedule_write`: the `forbidden_row_violations` field in the raw JSON shows whether the model touched rows it was told not to -- a real-world risk signal even if precision/recall look fine.
 
 ## Project structure
 
 ```
-LocalAIModelsForBusinessesExperiment/
+agen-icp-6/
 ├── README.md
-├── run_experiment.py          # The harness (multi-backend, multi-model, multi-run, 6 workflows)
+├── LICENSE                    # MIT (code) + CC-BY-4.0 (data/prompts)
+├── run_experiment.py          # The harness (multi-backend, multi-model, multi-run, 8 workflows)
 ├── probe_models.py            # Model-probe utility
 ├── pyproject.toml             # uv project (openai, easyocr, pillow, numpy, openpyxl, pymupdf)
 ├── .env.example               # Credential template
 ├── .gitignore
+├── docs/
+│   └── METHODOLOGY.md         # Scoring rubrics, sampling settings, limitations
 ├── prompts/                   # One system prompt per workflow
 ├── data/
-│   ├── aa1/                   # Spec + cert + ground truth (synthetic)
-│   ├── bm1/                   # Dimension CSVs + engineering drawings + ground truth
-│   ├── pdf_extract/           # 4 PDFs: 2 English native, 2 German scanned + ground truth
-│   ├── xlsx_gantt/            # Excel timeline with injected scheduling issues + ground truth
-│   └── xlsx_modify/           # Baseline schedule + delay scenario + ground truth
+│   ├── compliance/            # Spec + cert + ground truth (synthetic)
+│   ├── dims/                  # Dimension CSVs + engineering drawings + ground truth
+│   ├── docs/                  # 3 PDF variants: native, scanned, image-based + ground truth
+│   ├── schedule_read/         # Excel timeline with injected scheduling issues + ground truth
+│   └── schedule_write/        # Baseline schedule + delay scenario + ground truth
 └── results/                   # Run JSONs + summary MDs land here
 ```
 
@@ -140,9 +147,11 @@ LocalAIModelsForBusinessesExperiment/
 - **EasyOCR** runs locally (CPU is fine for the test inputs) and triggers automatically on scanned PDFs and engineering drawings.
 - Hardware tier reasoning assumes **Q4 quantization**. If you use FP8/FP16, re-check VRAM requirements.
 
+For full scoring rubrics, ground-truth construction methodology, and known limitations, see [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
+
 ## License
 
-Code: MIT. Data and prompts: CC-BY-4.0.
+Code: MIT. Data and prompts: CC-BY-4.0. See [`LICENSE`](LICENSE) for full text.
 
 ## Author
 

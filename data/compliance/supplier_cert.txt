@@ -8,7 +8,7 @@ Issue date:       2026-04-22
 Heat number:      H-2025-44912
 For customer:     [End customer code TC-44]
 Order reference:  PO-1107-A
-Standard:         ASTM A276 (with mill internal extensions)
+Standard:         ASTM A276-17 (with mill internal extensions)
 
 The undersigned mill metallurgist certifies that the material described below
 was produced and tested in accordance with the standards referenced above.
@@ -35,7 +35,7 @@ Measured cooling rate:          ~58 K per sec from solution temperature
 CHEMICAL COMPOSITION (mass percent, ladle analysis)
 ---------------------------------------------------
 Carbon:      0.025
-Manganese:   1.74
+Manganese:   1.98
 Phosphorus:  0.028
 Sulfur:      0.022
 Silicon:     0.46

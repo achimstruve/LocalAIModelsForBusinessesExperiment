@@ -53,7 +53,7 @@ Suggested clean scheme for the bores: `Ø50 H7`→⑭, `Ø70`→⑬, `Ø90 H7`�
 
 ## After you re-export
 
-Re-save the corrected JPGs into this folder (`data/bm1/`). Then the ground-truth JSON files will be updated so that:
+Re-save the corrected JPGs into this folder (`data/dims/`). Then the ground-truth JSON files will be updated so that:
 - drawing-1: bore diameters keyed to their corrected balloons
 - drawing-3: dimension list re-aligned to the contiguous balloon sequence
 - drawing-4: the counterbore entry corrected to the right through/counterbore diameters

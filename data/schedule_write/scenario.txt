@@ -1,0 +1,31 @@
+TODAY'S DATE: 2026-05-15
+
+---------- Forwarded message ----------
+From: Istvan Molnar <istvan.molnar@shotpinhu.de>
+To: scheduling@yourcompany.example.com
+Date: 2026-05-15 09:14 CET
+Subject: Re: PO 2026-0488 — shot peening status for your part P-100
+
+Dear scheduling team,
+
+I apologise for the late reply. We had an unexpected maintenance shutdown on our main blasting
+cabinet from May 6 through May 14. Because of this, we were not able to begin your order on
+the originally agreed date.
+
+I can confirm we loaded your part P-100 onto the machine this morning (May 15) and processing
+is now underway. Our standard turnaround for this type of job is 7 calendar days, so you can
+expect the finished part to ship on May 22.
+
+We understand this is later than planned and apologise for any inconvenience. Please let me
+know if you need revised paperwork.
+
+Best regards,
+Istvan Molnar
+Operations Manager
+ShotpinHU GmbH, Györ
+
+---------- End of forwarded message ----------
+
+Using the email above and the current project timeline, update the spreadsheet to reflect what
+actually happened and propagate any downstream impact. Output only the structured edit list as
+instructed by the system prompt.
