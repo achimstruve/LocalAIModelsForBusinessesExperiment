@@ -314,7 +314,7 @@ def _model_extra_kwargs(model: str) -> dict:
     # on VLM endpoints; removed require_parameters for VLM models where it
     # caused routing failures because backends don't advertise seed support).
     if backend == "openrouter":
-        is_vlm = any(tag in model for tag in ("-vl-", "-vl ", "vlm", "-vision", "vision-"))
+        is_vlm = any(tag in model for tag in ("-vl-", "-vl ", "vlm", "-vision", "vision-", "qwen3.5-122b", "qwen3.5-397b"))
         extra_body["provider"] = {
             "require_parameters": not is_vlm,   # relax for VLMs (seed not always advertised)
             "quantizations": ["fp16", "bf16", "fp8", "int8"],  # allow int8 (fixes first-run 404s)
@@ -360,7 +360,7 @@ MODEL_BACKEND: dict[str, str] = {
     "qwen/qwen3-vl-30b-a3b-instruct":    "openrouter",  # 30B MoE VL, ~3B active — Tier 0.5
     # Anchor models — closed-source reference ceilings.
     "gpt-5.5-2026-04-23":               "openai_direct",  # GPT-5.5 via direct OpenAI API
-    "claude-opus-4-7":                   "anthropic",       # Claude Opus 4.7 via Anthropic API
+    "claude-opus-4-6":                   "anthropic",       # Claude Opus 4.6 via Anthropic API
 }
 
 # Workflow-aware defaults (applied when --models is NOT passed).
@@ -370,7 +370,7 @@ MODEL_BACKEND: dict[str, str] = {
 # Anchor (closed-source) models — reference ceilings, not local-deployment candidates.
 _ANCHOR_MODELS = [
     "gpt-5.5-2026-04-23",                  # GPT-5.5 via direct OpenAI API
-    "claude-opus-4-7",                     # Claude Opus 4.7 via Anthropic API
+    "claude-opus-4-6",                     # Claude Opus 4.6 via Anthropic API
 ]
 
 _FULL_LADDER = [
@@ -397,7 +397,7 @@ _VISION_LADDER = [
 # behaviour — Tensorix's VLM hosting was silently caching and/or timing out.
 # Hardware tier annotations refer to what the model would need if SELF-HOSTED;
 # OpenRouter is just the test harness for now.
-# Anchor models (GPT-5.5, Opus 4.7) are included — both support vision natively.
+# Anchor models (GPT-5.5, Opus 4.6) are included — both support vision natively.
 _VLM_LADDER = [
     *_ANCHOR_MODELS,                        # closed-model reference ceilings (both support vision)
     "qwen/qwen3-vl-235b-a22b-instruct",    # ~140 GB Q4 — Tier 2.5 (235B MoE, ~22B active)
@@ -835,6 +835,10 @@ def _norm_kind(s: str) -> str:
         "ra": "surface_finish",
         "undercut_callout": "undercut_callout",
         "undercut": "undercut_callout",
+        "position": "position",
+        "true_position": "position",
+        "true position": "position",
+        "tp": "position",
     }
     return aliases.get(s, s)
 

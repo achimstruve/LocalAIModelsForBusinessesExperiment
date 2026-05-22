@@ -46,7 +46,7 @@ MODEL_COLOURS = [
 ]
 
 # Anchor model identifiers — drawn as reference lines instead of bars.
-ANCHOR_MODELS = {"gpt-5.5-2026-04-23", "claude-opus-4-7"}
+ANCHOR_MODELS = {"gpt-5.5-2026-04-23", "claude-opus-4-6"}
 
 # ── Shared styling ──────────────────────────────────────────────────────────
 plt.rcParams.update({
@@ -169,7 +169,7 @@ def _add_anchor_lines(ax, anchor_f1s: dict[str, float], y_max: float = 1.12):
     """Add dashed horizontal reference lines for anchor models."""
     anchor_styles = {
         "gpt-5.5-2026-04-23": {"color": "#1A237E", "label": "GPT-5.5"},
-        "claude-opus-4-7":    {"color": "#4A148C", "label": "Opus 4.7"},
+        "claude-opus-4-6":    {"color": "#4A148C", "label": "Opus 4.6"},
     }
     for model_id, f1 in anchor_f1s.items():
         if f1 <= 0:

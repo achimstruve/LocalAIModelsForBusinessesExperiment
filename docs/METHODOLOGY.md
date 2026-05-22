@@ -6,7 +6,7 @@ This document describes the scoring rubrics, sampling settings, ground-truth con
 
 ## 1. Purpose and intended use
 
-AGEN-OPS-6 measures whether open-source and closed-source LLMs can reliably perform six categories of assistive-AI tasks that small and mid-sized manufacturing / engineering firms (10--500 employees) actually need. Open-source models are benchmarked for local deployment on commodity GPU hardware; closed-source models (GPT-5.5, Claude Opus 4.7) serve as reference ceilings. The benchmark is designed for:
+AGEN-OPS-6 measures whether open-source and closed-source LLMs can reliably perform six categories of assistive-AI tasks that small and mid-sized manufacturing / engineering firms (10--500 employees) actually need. Open-source models are benchmarked for local deployment on commodity GPU hardware; closed-source models (GPT-5.5, Claude Opus 4.6) serve as reference ceilings. The benchmark is designed for:
 
 - **Procurement teams** evaluating whether a local-hosted open model can replace or augment a specific workflow before committing to hardware or SaaS spend.
 - **AI consultants** positioning model recommendations with measurable, operations-grounded evidence rather than generic benchmark scores.
@@ -330,5 +330,5 @@ This benchmark is in its second iteration (v0.5). Known areas for future extensi
 - **Model provenance logging.** Response headers (`x-provider`, `served_model`, rate limits) are now captured and stored in metadata (see section 6.4).
 - **Infrastructure failure separation.** Failed runs are categorized as infra vs capability, with separate score sets (see section 6.1).
 - **Bootstrap confidence intervals.** 95% CIs on all metrics (see section 6.2).
-- **Closed-model anchor points.** GPT-5.5 and Claude Opus 4.7 as reference ceilings.
+- **Closed-model anchor points.** GPT-5.5 and Claude Opus 4.6 as reference ceilings.
 - **Multi-backend support.** Tensorix, OpenRouter, OpenAI (direct), and Anthropic backends.

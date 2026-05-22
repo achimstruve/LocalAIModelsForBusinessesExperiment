@@ -102,7 +102,7 @@ All arithmetic in the ground truth was verified correct. Specific findings per w
 Based on these findings, the following changes were prioritised:
 
 1. **Harden OpenRouter reliability** — relax quantization constraints, add pre-flight credit check, better error categorization.
-2. **Add closed-model anchor points** (GPT-5.5, Claude Opus 4.7) — reference ceilings for interpreting open-model scores.
+2. **Add closed-model anchor points** (GPT-5.5, Claude Opus 4.6) — reference ceilings for interpreting open-model scores.
 3. **Separate infrastructure from capability failures** in scoring — report both "all runs" and "successful only" metrics.
 4. **Focus on VLM path** — move dims_ocr to appendix; dims_vlm becomes the primary vision workflow.
 5. **Add bootstrap confidence intervals** — N=10 is small; CIs make the uncertainty visible.
