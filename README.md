@@ -10,31 +10,59 @@ This experiment bridges that gap with six task types drawn from real ICP (Ideal 
 
 ## What's tested
 
+**Default workflows** (included in `--workflow all`):
+
 | Workflow | Real-world analog | What it tests |
 |---|---|---|
 | `compliance` | Quality engineer comparing an incoming material certificate against a customer specification | Multi-attribute compliance reasoning, tolerance logic, structured flag-with-justification output |
 | `dims` | Production engineer cross-checking drawn dimensions against CAM-extracted dims | Tabular comparison, 10%-tolerance-band rule, false-positive cost awareness |
-| `dims_ocr` | Same engineer extracting a dim+tol table from a drawing without retyping | OCR + VLM grounding, table reconstruction, units/tolerance-frame parsing |
+| `dims_vlm` | Same engineer extracting dimensions directly from a drawing image | Direct VLM reading of engineering drawing callouts, table reconstruction |
 | `docs` | Operations manager pulling structured fields out of a mixed pile of PDFs (English native + German scanned) | OCR fallback, multilingual NER, schema-conformant JSON output |
 | `schedule_read` | PM scanning a project plan for issues humans miss | Spreadsheet ingestion, multi-row dependency reasoning |
 | `schedule_write` | PM updating a plan after a supplier delay, with cascade propagation | Multi-cell coordinated write, protected-region awareness |
+
+**Appendix workflows** (run explicitly via `--workflow`):
+
+| Workflow | What it tests | Why appendix |
+|---|---|---|
+| `dims_ocr` | OCR + LLM hybrid dimension extraction | OCR bottleneck caps recall at ~0.70; direct VLM path is superior (see `docs/FIRST_RUN_INSIGHTS.md`) |
+| `docs_vlm` | Direct VLM PDF entity extraction | Provider infrastructure issues in first run; `docs` with OCR fallback is the primary path |
 
 Coverage: text/data, image/vision, PDF (native + scanned OCR), spreadsheet read, spreadsheet write.
 
 ## Model ladder
 
-**Text workflows** (compliance, dims, docs, schedule_read, schedule_write):
+**Anchor models** (closed-source reference ceilings, not local-deployment candidates):
+
+| Model | Provider | Purpose |
+|---|---|---|
+| `gpt-5.5-2026-04-23` | OpenAI (direct) | GPT-5.5 — lets readers interpret open-model scores as "X% of GPT-5.5" |
+| `claude-opus-4-7` | Anthropic | Claude Opus 4.7 — second closed-model reference point |
+
+**Open-model text ladder** (compliance, dims, docs, schedule_read, schedule_write):
 
 | Model | Size | Hardware tier (Q4 inference) |
 |---|---|---|
+| `qwen/qwen3-235b-a22b-2507` | 235B MoE (~22B active) | Tier 2+ |
 | `openai/gpt-oss-120b` | 120B MoE | Tier 2 (~60 GB VRAM) |
+| `meta-llama/llama-4-maverick` | ~400B MoE (~17B active) | Tier 2 |
 | `qwen/qwen-2.5-72b-instruct` | 72B | Tier 1+ (~40 GB) |
 | `meta-llama/llama-3.3-70b-instruct` | 70B | Tier 1+ (~40 GB) |
+| `deepseek/deepseek-v4-flash` | MoE (size unverified) | Tier 1+ |
 | `z-ai/glm-5.1` | ? (unverified) | Tier 1+ |
 | `openai/gpt-oss-20b` | 20B | Tier 0.5 (~12 GB) |
 | `qwen/qwen3.5-9b` | 9B | Tier 0 (~6 GB) |
 
-**Vision workflows** (dims_vlm, docs_vlm) use a separate VLM ladder routed via OpenRouter -- see `run_experiment.py` for the full list.
+**VLM ladder** (dims_vlm) -- routed via OpenRouter, plus anchor models:
+
+| Model | Size | Hardware tier (Q4, self-hosted) |
+|---|---|---|
+| `qwen/qwen3-vl-235b-a22b-instruct` | 235B MoE (~22B active) | Tier 2.5 (~140 GB) |
+| `qwen/qwen3.5-122b-a10b` | 122B MoE (~10B active) | Tier 2 (~70 GB) |
+| `qwen/qwen3.5-397b-a17b` | 397B MoE (~17B active) | Tier 3 (~225 GB) |
+| `qwen/qwen3-vl-235b-a22b-thinking` | 235B MoE (Thinking) | Tier 2.5 |
+| `qwen/qwen-2.5-vl-72b-instruct` | 72B | Tier 1+ (~40 GB) |
+| `qwen/qwen3-vl-30b-a3b-instruct` | 30B MoE (~3B active) | Tier 0.5 (~18 GB) |
 
 **Hardware tiers:**
 
@@ -46,6 +74,8 @@ Coverage: text/data, image/vision, PDF (native + scanned OCR), spreadsheet read,
 | Tier 0 | 1x RTX 4070 Ti Super (16 GB) | ~1.5-2.5k | 7-9B class |
 
 The key question: if a smaller model still hits acceptable precision/recall, can we recommend a cheaper hardware tier?
+
+**Providers:** Tensorix (open models), OpenRouter (VLM routing), OpenAI (GPT-5.5 direct), Anthropic (Claude Opus 4.7).
 
 ## Setup
 
@@ -68,7 +98,7 @@ The key question: if a smaller model still hits acceptable precision/recall, can
    cp .env.example .env
    ```
 
-   You need at minimum a [Tensorix](https://tensorix.ai) API key. OpenRouter is optional (only required if you opt into OpenRouter-hosted models via `--models`).
+   You need at minimum a [Tensorix](https://tensorix.ai) API key for the open-model ladder. Additional optional keys: OpenRouter (VLM workflows), OpenAI (GPT-5.5 anchor), Anthropic (Opus 4.7 anchor). See `.env.example` for all options.
 
 4. **Verify input data** is present under `data/` (see [Project structure](#project-structure) below).
 
@@ -113,11 +143,19 @@ Each run produces:
 | Precision | Of items the model flagged/extracted, what fraction were correct? |
 | Recall | Of items it should have flagged/extracted, what fraction did it catch? |
 | F1 | Harmonic mean of precision and recall |
+| CI 95% | Bootstrap 95% confidence interval for the metric mean |
+| Runs ok | Successful runs / total runs (reliability indicator) |
 | Latency mean (s) | Average end-to-end LLM call time per run |
+
+**Two score sets** are reported:
+- **F1 all** -- all failed runs score 0.0 (penalizes unreliable providers)
+- **F1 succ** -- only successful runs count (measures pure model capability)
+
+Use **F1 succ** as the primary capability metric, qualified by **Runs ok** (reliability). A model with F1 succ = 0.95 but Runs ok = 3/10 is capable but unreliable on that provider.
 
 **Verdict heuristics:**
 
-- Both >= 0.85, std < 0.10 -- **strong pass** (capable of human-in-the-loop pilot)
+- Both P and R >= 0.85, std < 0.10 -- **strong pass** (capable of human-in-the-loop pilot)
 - Both >= 0.70 -- **pass** (feasible with attention to false-positive triage)
 - Either < 0.70 -- **weak / fail** (needs prompt iteration or a different model)
 
@@ -185,7 +223,8 @@ agen-ops-6/
 ├── .gitignore
 ├── assets/                    # Chart PNGs embedded in the README
 ├── docs/
-│   └── METHODOLOGY.md         # Scoring rubrics, sampling settings, limitations
+│   ├── METHODOLOGY.md         # Scoring rubrics, sampling settings, limitations
+│   └── FIRST_RUN_INSIGHTS.md  # Lessons from the first full run (May 2026)
 ├── prompts/                   # One system prompt per workflow
 ├── data/
 │   ├── compliance/            # Spec + cert + ground truth (synthetic)
@@ -207,13 +246,21 @@ For full scoring rubrics, ground-truth construction methodology, and known limit
 
 ## Status and limitations
 
-This is a **first-iteration benchmark** -- a practical starting point, not a definitive measurement framework. A few things to be upfront about:
+This is the **v0.5 iteration** of the benchmark. Key improvements from v0.4:
 
-- **Model provenance is trust-based.** The harness requests models by ID from inference providers (Tensorix, OpenRouter), but there is no cryptographic verification that the weights actually served match the requested checkpoint. OpenRouter routes to downstream backends that may differ in quantization or checkpoint revision. Results should be read as "model ID X as served by provider Y on date Z."
-- **Single-author ground truth.** All ground-truth labels were created by one person. Systematic blind spots are possible.
+- **Infrastructure vs capability failure separation** -- provider outages no longer silently contaminate model scores.
+- **Bootstrap 95% CIs** on all metrics -- uncertainty is visible, not hidden behind point estimates.
+- **Closed-model anchor points** (GPT-5.5, Claude Opus 4.7) -- readers can interpret open-model scores relative to frontier models.
+- **Provider response header capture** -- `x-provider`, `served_model`, and rate-limit headers are logged for traceability.
+- **Multi-backend support** -- Tensorix, OpenRouter, OpenAI (direct), Anthropic.
+
+Things to be upfront about:
+
+- **Model provenance is trust-based.** No provider offers cryptographic verification that served weights match the requested checkpoint. Response headers (`x-provider`, `served_model`) are now captured for traceability, but results should still be read as "model ID X as served by provider Y on date Z."
+- **Single-author ground truth.** All ground-truth labels were created by one person. A second-reviewer audit verified all arithmetic (see `docs/FIRST_RUN_INSIGHTS.md`), but systematic blind spots are possible.
 - **Synthetic data only.** Inputs are designed to mirror real-world complexity but may not capture the full distribution of production documents.
 
-Future iterations may add provider-response-header logging for stronger traceability, multi-rater ground truth, fine-tuning comparisons, and additional workflows and data. See [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) sections 7 and 9 for the full list of known limitations and planned extensions.
+See [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) sections 7 and 9 for the full list of known limitations and planned extensions, and [`docs/FIRST_RUN_INSIGHTS.md`](docs/FIRST_RUN_INSIGHTS.md) for lessons from the first full run.
 
 ## License
 

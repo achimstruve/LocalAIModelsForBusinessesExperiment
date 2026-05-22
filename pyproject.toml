@@ -1,10 +1,11 @@
 [project]
 name = "agen-ops-6"
-version = "0.4.0"
-description = "SME-AI workflow benchmark: open-model fit on commodity GPU tiers. Six operations-grounded tasks — cert-vs-spec compliance, drawing-vs-3D reasoning, vision extraction (OCR + LLM), multilingual PDF entity extraction (with auto-OCR fallback for scanned), Gantt-spreadsheet issue detection, and spreadsheet cascade-update editing. Multi-model, multi-run, statistical aggregation."
+version = "0.5.0"
+description = "SME-AI workflow benchmark: open-model fit on commodity GPU tiers. Eight operations-grounded workflow variants — cert-vs-spec compliance, drawing-vs-3D reasoning, vision extraction (OCR + LLM and direct VLM), multilingual PDF entity extraction (with auto-OCR fallback for scanned), Gantt-spreadsheet issue detection, and spreadsheet cascade-update editing. Multi-backend (Tensorix, OpenRouter, OpenAI, Anthropic), multi-model, multi-run, statistical aggregation with bootstrap CIs."
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.40.0",
+    "anthropic>=0.40.0",
     "easyocr>=1.7.1",
     "pillow>=10.0.0",
     "numpy>=1.26.0",

@@ -1,31 +1,35 @@
 """
-SME-AI workflow benchmark — open-model fit on commodity GPU tiers.
+AGEN-OPS-6 — SME-AI workflow benchmark (v0.5).
 
-Tests open-source models served via the Tensorix OpenAI-compatible API on six
-synthetic / semi-synthetic SME-relevant workflows:
+Tests open-source and closed-source LLMs on eight workflow variants covering
+real-world SME operations tasks. Multi-backend: Tensorix, OpenRouter,
+OpenAI (direct), Anthropic.
 
+Default workflows (--workflow all):
     compliance      Material certificate compliance (text)
     dims            Drawing-vs-3D dimension comparison reasoning (text)
-    dims_ocr        Vision: OCR locally (EasyOCR) + LLM extracts dim+tol table
+    dims_vlm        Direct VLM dimension extraction from engineering drawings
+    docs            PDF entity extraction (native + OCR fallback)
+    schedule_read   Spreadsheet issue detection
+    schedule_write  Spreadsheet cascade-update editing
 
-Models compared (all fit Tier 2 / Tier 1 hardware comfortably):
+Additional (run explicitly via --workflow):
+    dims_ocr        EasyOCR + LLM hybrid dim extraction (appendix)
+    docs_vlm        Direct VLM PDF extraction (appendix)
 
-    meta-llama/llama-3.3-70b-instruct
-    qwen/qwen-2.5-72b-instruct
-    z-ai/glm-5.1   (size unverified publicly; user vouched as fits-our-hardware)
-
-Each (workflow, model[, drawing]) combination is run N times (default 10) and
-aggregated with mean / std / min / max for precision, recall, F1, latency.
+Each (workflow, model[, drawing/PDF]) combination is run N times (default 10)
+and aggregated with mean / std / CI / min / max for precision, recall, F1, latency.
+Infrastructure failures (timeouts, 402, 404) are separated from capability failures.
 
 Setup:
     uv sync
-    cp .env.example .env, fill in TENSORIX_API_KEY + TENSORIX_BASE_URL
+    cp .env.example .env   # fill in API keys (see .env.example)
 
 Run:
-    uv run python run_experiment.py                              # all workflows, all models, 10 runs each
+    uv run python run_experiment.py                              # all default workflows, 10 runs
     uv run python run_experiment.py --workflow compliance         # one workflow
-    uv run python run_experiment.py --runs 3 --workflow dims_ocr --models meta-llama/llama-3.3-70b-instruct
-    uv run python run_experiment.py --no-extract                 # skip the OCR-heavy dims_ocr workflow
+    uv run python run_experiment.py --runs 1 --check-credits     # smoke test with credit check
+    uv run python run_experiment.py --workflow dims_ocr           # appendix workflow
 
 Outputs:
     results/run_<timestamp>.json        full raw runs + aggregates
@@ -99,6 +103,121 @@ except ImportError:
     print("ERROR: openai package not installed. Run: uv sync", file=sys.stderr)
     sys.exit(2)
 
+import random as _random
+
+
+# ----------------------------- Anthropic adapter --------------------------- #
+
+class _AnthropicMessage:
+    """Mimics openai.types.chat.ChatCompletionMessage."""
+    def __init__(self, content: str):
+        self.content = content
+
+class _AnthropicChoice:
+    """Mimics openai.types.chat.ChatCompletion.choices[0]."""
+    def __init__(self, content: str):
+        self.message = _AnthropicMessage(content)
+
+class _AnthropicResponse:
+    """Mimics openai.types.chat.ChatCompletion."""
+    def __init__(self, content: str, headers: dict | None = None):
+        self.choices = [_AnthropicChoice(content)]
+        self._headers = headers or {}
+
+class _AnthropicCompletionsNamespace:
+    """Wraps anthropic.Anthropic to look like client.chat.completions.create()."""
+    def __init__(self, anthropic_client):
+        self._client = anthropic_client
+
+    def create(self, *, model: str, messages: list[dict], temperature: float = 0.1,
+               response_format: dict | None = None, timeout: float | None = None,
+               **kwargs) -> _AnthropicResponse:
+        # Translate OpenAI message format → Anthropic format.
+        system_text = ""
+        anthropic_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_text = msg["content"] if isinstance(msg["content"], str) else str(msg["content"])
+            else:
+                # Handle vision content (list of content blocks).
+                if isinstance(msg["content"], list):
+                    blocks = []
+                    for block in msg["content"]:
+                        if block["type"] == "text":
+                            blocks.append({"type": "text", "text": block["text"]})
+                        elif block["type"] == "image_url":
+                            url = block["image_url"]["url"]
+                            if url.startswith("data:"):
+                                # Parse data URL: data:<mime>;base64,<data>
+                                header, b64_data = url.split(",", 1)
+                                mime = header.split(":")[1].split(";")[0]
+                                blocks.append({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime,
+                                        "data": b64_data,
+                                    },
+                                })
+                    anthropic_messages.append({"role": msg["role"], "content": blocks})
+                else:
+                    anthropic_messages.append({"role": msg["role"], "content": msg["content"]})
+
+        # If JSON mode requested, add instruction to system prompt.
+        if response_format and response_format.get("type") == "json_object":
+            system_text += "\n\nIMPORTANT: Respond with valid JSON only. Do not include any text outside the JSON object."
+
+        # Strip extra_body and other OpenAI-specific kwargs.
+        kwargs.pop("extra_body", None)
+        kwargs.pop("seed", None)
+
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": 8192,
+            "temperature": temperature,
+            "messages": anthropic_messages,
+        }
+        if system_text:
+            create_kwargs["system"] = system_text
+        if timeout:
+            create_kwargs["timeout"] = timeout
+
+        resp = self._client.messages.create(**create_kwargs)
+        content = resp.content[0].text if resp.content else ""
+        headers = {}
+        if hasattr(resp, '_response') and hasattr(resp._response, 'headers'):
+            raw_headers = resp._response.headers
+            for h in ("request-id", "anthropic-ratelimit-requests-limit",
+                       "anthropic-ratelimit-requests-remaining",
+                       "anthropic-ratelimit-tokens-limit",
+                       "anthropic-ratelimit-tokens-remaining"):
+                if h in raw_headers:
+                    headers[h] = raw_headers[h]
+        return _AnthropicResponse(content, headers)
+
+class _AnthropicChatNamespace:
+    """Provides client.chat.completions interface."""
+    def __init__(self, completions: _AnthropicCompletionsNamespace):
+        self.completions = completions
+
+class AnthropicAdapter:
+    """Wraps anthropic.Anthropic() to provide a .chat.completions.create()-compatible interface.
+
+    This allows the rest of the harness to treat Anthropic exactly like an OpenAI client.
+    Key translations:
+      - messages (OpenAI) → system + messages (Anthropic)
+      - response_format={"type": "json_object"} → system prompt suffix
+      - Vision: image_url data URLs → Anthropic base64 image blocks
+      - Response: resp.content[0].text → resp.choices[0].message.content
+    """
+    def __init__(self, api_key: str):
+        try:
+            import anthropic
+        except ImportError:
+            raise RuntimeError("anthropic package not installed. Run: uv add anthropic")
+        self._client = anthropic.Anthropic(api_key=api_key, max_retries=0)
+        self.chat = _AnthropicChatNamespace(_AnthropicCompletionsNamespace(self._client))
+
 
 # Per-API-call timeout. We saw individual gpt-oss-20b runs spend 188s and 370s on
 # docs because the OpenAI SDK's default max_retries=2 turned a single timeout
@@ -165,7 +284,7 @@ def threading_main_thread() -> bool:
 def _model_extra_kwargs(model: str) -> dict:
     """Return per-model kwargs to merge into chat.completions.create().
 
-    Three things to cope with:
+    Handles:
 
     * gpt-oss-*  uses the harmony format with a separate reasoning channel.
                  Set reasoning_effort="low" to skip extended reasoning.
@@ -174,22 +293,32 @@ def _model_extra_kwargs(model: str) -> dict:
     * OpenRouter routes the same model to multiple backend providers, some of
                  which serve heavily-quantized fast copies that return empty
                  results in 1-5 seconds while quality providers take 60-100s.
-                 Constrain routing: forbid aggressive quantizations and require
-                 providers that accept all our parameters (seed, response_format).
+                 Constrain routing with relaxed quantization filters (int8 allowed
+                 after first-run 404s) and allow fallbacks.
+    * Anthropic / direct OpenAI — no extra_body needed (adapter handles translation).
 
     Also injects a per-call seed to defeat any request-level caching the
     provider might do.
     """
+    backend = MODEL_BACKEND.get(model, "tensorix")
+
+    # Anthropic adapter handles its own kwargs; skip all OpenAI-specific extras.
+    if backend == "anthropic":
+        return {}
+
     extras: dict = {}
     extras["seed"] = int(time.time() * 1_000_000) & 0x7FFFFFFF
     extra_body: dict = {}
 
-    # OpenRouter provider-routing — forces us onto consistent quality providers.
-    if MODEL_BACKEND.get(model, "tensorix") == "openrouter":
+    # OpenRouter provider-routing — relaxed from v0.4 (added int8 to fix 404s
+    # on VLM endpoints; removed require_parameters for VLM models where it
+    # caused routing failures because backends don't advertise seed support).
+    if backend == "openrouter":
+        is_vlm = any(tag in model for tag in ("-vl-", "-vl ", "vlm", "-vision", "vision-"))
         extra_body["provider"] = {
-            "require_parameters": True,         # provider must accept seed, response_format, etc.
-            "quantizations": ["fp16", "bf16", "fp8"],  # exclude int4/int8 quantized backends
-            "allow_fallbacks": True,            # allow another quality provider if first fails
+            "require_parameters": not is_vlm,   # relax for VLMs (seed not always advertised)
+            "quantizations": ["fp16", "bf16", "fp8", "int8"],  # allow int8 (fixes first-run 404s)
+            "allow_fallbacks": True,
         }
 
     if model.startswith("openai/gpt-oss"):
@@ -229,14 +358,23 @@ MODEL_BACKEND: dict[str, str] = {
     "qwen/qwen3.5-397b-a17b":            "openrouter",  # flagship multimodal-native, ~17B active
     "qwen/qwen3-vl-235b-a22b-thinking":  "openrouter",  # 235B Thinking variant — STEM/technical
     "qwen/qwen3-vl-30b-a3b-instruct":    "openrouter",  # 30B MoE VL, ~3B active — Tier 0.5
-    "z-ai/glm-5v-turbo":                 "openrouter",  # GLM 5 Vision (successor to GLM 4.5v)
+    # Anchor models — closed-source reference ceilings.
+    "gpt-5.5-2026-04-23":               "openai_direct",  # GPT-5.5 via direct OpenAI API
+    "claude-opus-4-7":                   "anthropic",       # Claude Opus 4.7 via Anthropic API
 }
 
 # Workflow-aware defaults (applied when --models is NOT passed).
 # Text workflows compare a full ladder from 9B → 120B so we can read off the
 # minimum hardware tier where the workflow still works. The extract workflow
 # keeps Qwen 2.5 72B as the primary baseline plus three downside comparators.
+# Anchor (closed-source) models — reference ceilings, not local-deployment candidates.
+_ANCHOR_MODELS = [
+    "gpt-5.5-2026-04-23",                  # GPT-5.5 via direct OpenAI API
+    "claude-opus-4-7",                     # Claude Opus 4.7 via Anthropic API
+]
+
 _FULL_LADDER = [
+    *_ANCHOR_MODELS,                       # closed-model reference ceilings
     "qwen/qwen3-235b-a22b-2507",           # ~235B MoE, ~22B active — Tier 2+ (July 2025)
     "openai/gpt-oss-120b",                 # ~120B MoE — Tier 2 only
     "meta-llama/llama-4-maverick",         # ~400B MoE, ~17B active — Tier 2
@@ -259,12 +397,13 @@ _VISION_LADDER = [
 # behaviour — Tensorix's VLM hosting was silently caching and/or timing out.
 # Hardware tier annotations refer to what the model would need if SELF-HOSTED;
 # OpenRouter is just the test harness for now.
+# Anchor models (GPT-5.5, Opus 4.7) are included — both support vision natively.
 _VLM_LADDER = [
+    *_ANCHOR_MODELS,                        # closed-model reference ceilings (both support vision)
     "qwen/qwen3-vl-235b-a22b-instruct",    # ~140 GB Q4 — Tier 2.5 (235B MoE, ~22B active)
     "qwen/qwen3.5-122b-a10b",              # ~70 GB Q4  — Tier 2   (multimodal-native, ~10B active)
     "qwen/qwen3.5-397b-a17b",              # ~225 GB Q4 — Tier 3   (flagship, ~17B active)
     "qwen/qwen3-vl-235b-a22b-thinking",    # ~140 GB Q4 — Tier 2.5 (Thinking variant)
-    "z-ai/glm-5v-turbo",                   # ~60 GB Q4  — Tier 2   (GLM 5 Vision, successor to 4.5v)
     "qwen/qwen-2.5-vl-72b-instruct",       # ~40 GB Q4  — Tier 1+  (baseline; prior F1≈0.77)
     "qwen/qwen3-vl-30b-a3b-instruct",      # ~18 GB Q4  — Tier 0.5 (30B MoE VL, ~3B active)
 ]
@@ -285,21 +424,24 @@ DEFAULT_MODELS = sorted({m for ms in DEFAULT_MODELS_PER_WORKFLOW.values() for m 
 
 
 class ClientPool:
-    """Lazy multi-backend OpenAI-compatible client factory.
+    """Lazy multi-backend client factory.
 
     Tensorix and OpenRouter both speak the OpenAI Chat Completions schema, so we
-    just keep one OpenAI() instance per backend and pick by model id.
+    keep one OpenAI() instance per backend. OpenAI direct uses the same SDK with
+    a different base URL. Anthropic uses AnthropicAdapter for format translation.
     """
 
     def __init__(self) -> None:
         self._tensorix = None
         self._openrouter = None
+        self._openai_direct = None
+        self._anthropic = None
         self._lock = threading.Lock()
 
     def _backend_for(self, model: str) -> str:
         return MODEL_BACKEND.get(model, "tensorix")
 
-    def get(self, model: str) -> "OpenAI":
+    def get(self, model: str):
         backend = self._backend_for(model)
         # max_retries=0 disables the OpenAI SDK's automatic retry-on-timeout behaviour
         # (default = 2). Without this, a single 150s timeout becomes ~450s wall clock.
@@ -312,6 +454,20 @@ class ClientPool:
                         raise RuntimeError(f"OPENROUTER_API_KEY not set (needed for {model}). Add it to .env.")
                     self._openrouter = OpenAI(api_key=key, base_url=url, max_retries=0)
                 return self._openrouter
+            if backend == "openai_direct":
+                if self._openai_direct is None:
+                    key = os.environ.get("OPENAI_API_KEY")
+                    if not key:
+                        raise RuntimeError(f"OPENAI_API_KEY not set (needed for {model}). Add it to .env.")
+                    self._openai_direct = OpenAI(api_key=key, base_url="https://api.openai.com/v1", max_retries=0)
+                return self._openai_direct
+            if backend == "anthropic":
+                if self._anthropic is None:
+                    key = os.environ.get("ANTHROPIC_API_KEY")
+                    if not key:
+                        raise RuntimeError(f"ANTHROPIC_API_KEY not set (needed for {model}). Add it to .env.")
+                    self._anthropic = AnthropicAdapter(api_key=key)
+                return self._anthropic
             # default: tensorix
             if self._tensorix is None:
                 key = os.environ.get("TENSORIX_API_KEY")
@@ -326,38 +482,81 @@ class ClientPool:
 
 def make_client_pool() -> ClientPool:
     """Create the multi-backend pool. Validates Tensorix env vars eagerly because
-    most runs go through Tensorix; OpenRouter is validated lazily on first use."""
+    most runs go through Tensorix; other backends are validated lazily on first use.
+    If Tensorix is not configured, prints a warning but continues (the user may
+    be running only anchor models or OpenRouter-hosted models)."""
     if not os.environ.get("TENSORIX_API_KEY") or not os.environ.get("TENSORIX_BASE_URL"):
-        print("ERROR: TENSORIX_API_KEY or TENSORIX_BASE_URL not set.", file=sys.stderr)
-        print("       Create a .env file in this folder (see .env.example).", file=sys.stderr)
-        sys.exit(2)
+        print("WARNING: TENSORIX_API_KEY or TENSORIX_BASE_URL not set.", file=sys.stderr)
+        print("         Tensorix-hosted models will fail. See .env.example.", file=sys.stderr)
+        print()
     return ClientPool()
 
 
-def call_model(client: OpenAI, model: str, system_prompt: str, user_prompt: str, temperature: float) -> tuple[str, dict]:
+_INTERESTING_HEADERS = [
+    "x-provider", "openrouter-processing-ms", "x-request-id",
+    "x-ratelimit-limit-requests", "x-ratelimit-remaining-requests",
+    "x-ratelimit-limit-tokens", "x-ratelimit-remaining-tokens",
+]
+
+
+def _create_with_headers(client, create_kwargs: dict) -> tuple:
+    """Call chat.completions.create, capturing response headers when possible.
+
+    Returns (response, headers_dict). For backends that don't support
+    with_raw_response (e.g. AnthropicAdapter), headers_dict may be empty.
+    """
+    headers: dict[str, str] = {}
+    try:
+        raw = client.chat.completions.with_raw_response.create(**create_kwargs)
+        for h in _INTERESTING_HEADERS:
+            v = raw.headers.get(h)
+            if v:
+                headers[h] = v
+        # Capture the actual model served (may differ from requested).
+        resp = raw.parse()
+        if hasattr(resp, 'model') and resp.model:
+            headers["served_model"] = resp.model
+        return resp, headers
+    except AttributeError:
+        # Client doesn't support with_raw_response (e.g. AnthropicAdapter).
+        resp = client.chat.completions.create(**create_kwargs)
+        if hasattr(resp, '_headers'):
+            headers = resp._headers
+        return resp, headers
+
+
+def call_model(client, model: str, system_prompt: str, user_prompt: str, temperature: float) -> tuple[str, dict]:
     """Call the model. Try response_format=json_object first; fall back to plain text.
     On a timeout we skip the fallback — see RUN_TIMEOUT_S note above. Net wall clock
     per call is bounded at ~RUN_TIMEOUT_S (timeout fires fast) or ~2 × RUN_TIMEOUT_S
-    (json_object refused for non-timeout reasons, then plain-text retry)."""
+    (json_object refused for non-timeout reasons, then plain-text retry).
+
+    Captures provider response headers (x-provider, processing time, rate limits)
+    when available, stored in metadata["response_headers"].
+    """
     metadata: dict = {"attempts": []}
     last_was_timeout = False
     extra_kwargs = _model_extra_kwargs(model)
 
+    create_kwargs = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": temperature,
+        "response_format": {"type": "json_object"},
+        "timeout": RUN_TIMEOUT_S,
+        **extra_kwargs,
+    }
+
     try:
         t0 = time.time()
         with hard_timeout(RUN_TIMEOUT_S * 1.2):
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=temperature,
-                response_format={"type": "json_object"},
-                timeout=RUN_TIMEOUT_S,
-                **extra_kwargs,
-            )
+            resp, headers = _create_with_headers(client, create_kwargs)
         elapsed = time.time() - t0
+        if headers:
+            metadata["response_headers"] = headers
         content = resp.choices[0].message.content
         if content is not None and content.strip():
             metadata["attempts"].append({"mode": "json_object", "elapsed_s": round(elapsed, 2), "ok": True})
@@ -369,19 +568,23 @@ def call_model(client: OpenAI, model: str, system_prompt: str, user_prompt: str,
         if last_was_timeout:
             raise
 
+    create_kwargs_plain = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": temperature,
+        "timeout": RUN_TIMEOUT_S,
+        **extra_kwargs,
+    }
+
     t0 = time.time()
     with hard_timeout(RUN_TIMEOUT_S * 1.2):
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=temperature,
-            timeout=RUN_TIMEOUT_S,
-            **extra_kwargs,
-        )
+        resp, headers = _create_with_headers(client, create_kwargs_plain)
     elapsed = time.time() - t0
+    if headers:
+        metadata["response_headers"] = headers
     metadata["attempts"].append({"mode": "plain", "elapsed_s": round(elapsed, 2), "ok": True})
     return resp.choices[0].message.content, metadata
 
@@ -764,11 +967,13 @@ def _image_to_data_url(path: Path) -> str:
     return f"data:{mime};base64,{b64}"
 
 
-def call_vlm(client: OpenAI, model: str, system_prompt: str, user_text: str, image_paths: Path | list[Path], temperature: float) -> tuple[str, dict]:
+def call_vlm(client, model: str, system_prompt: str, user_text: str, image_paths: Path | list[Path], temperature: float) -> tuple[str, dict]:
     """Vision-model variant of call_model. Sends the system prompt as text and the
     user prompt as a (text + image_url[, image_url, ...]) multipart message. Accepts
     either a single Path (single-image, e.g. dims_vlm) or a list of Paths (multi-image,
-    e.g. docs_vlm with one image per PDF page). Same retry-on-no-JSON semantics as call_model."""
+    e.g. docs_vlm with one image per PDF page). Same retry-on-no-JSON semantics as call_model.
+
+    Captures provider response headers when available."""
     metadata: dict = {"attempts": []}
     if isinstance(image_paths, Path):
         image_paths = [image_paths]
@@ -778,21 +983,25 @@ def call_vlm(client: OpenAI, model: str, system_prompt: str, user_text: str, ima
     metadata["image_count"] = len(image_paths)
     extra_kwargs = _model_extra_kwargs(model)
 
+    create_kwargs = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": temperature,
+        "response_format": {"type": "json_object"},
+        "timeout": RUN_TIMEOUT_S,
+        **extra_kwargs,
+    }
+
     try:
         t0 = time.time()
         with hard_timeout(RUN_TIMEOUT_S * 1.2):
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                temperature=temperature,
-                response_format={"type": "json_object"},
-                timeout=RUN_TIMEOUT_S,
-                **extra_kwargs,
-            )
+            resp, headers = _create_with_headers(client, create_kwargs)
         elapsed = time.time() - t0
+        if headers:
+            metadata["response_headers"] = headers
         content = resp.choices[0].message.content
         if content is not None and content.strip():
             metadata["attempts"].append({"mode": "json_object", "elapsed_s": round(elapsed, 2), "ok": True})
@@ -804,19 +1013,23 @@ def call_vlm(client: OpenAI, model: str, system_prompt: str, user_text: str, ima
         if was_timeout:
             raise
 
+    create_kwargs_plain = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": temperature,
+        "timeout": RUN_TIMEOUT_S,
+        **extra_kwargs,
+    }
+
     t0 = time.time()
     with hard_timeout(RUN_TIMEOUT_S * 1.2):
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            temperature=temperature,
-            timeout=RUN_TIMEOUT_S,
-            **extra_kwargs,
-        )
+        resp, headers = _create_with_headers(client, create_kwargs_plain)
     elapsed = time.time() - t0
+    if headers:
+        metadata["response_headers"] = headers
     metadata["attempts"].append({"mode": "plain", "elapsed_s": round(elapsed, 2), "ok": True})
     return resp.choices[0].message.content, metadata
 
@@ -1317,6 +1530,8 @@ def run_schedule_write(client: OpenAI, model: str, temperature: float) -> dict:
             ok = False
             if "expected_value" in ge:
                 ok = norm(ge["expected_value"]) == new_val or norm(ge["expected_value"]) in new_val
+                if not ok and "expected_value_alternatives" in ge:
+                    ok = any(norm(alt) == new_val or norm(alt) in new_val for alt in ge["expected_value_alternatives"])
             elif "expected_value_keywords_any_of" in ge:
                 ok = any(k.lower() in new_val for k in ge["expected_value_keywords_any_of"])
             if ok:
@@ -1366,31 +1581,71 @@ def run_schedule_write(client: OpenAI, model: str, temperature: float) -> dict:
 
 # ----------------------------- aggregator --------------------------------- #
 
-def aggregate(runs: list[dict]) -> dict:
-    """Compute mean / std / min / max for precision, recall, F1, latency over runs.
+_INFRA_FAILURE_PATTERNS = [
+    "402", "404", "429", "timed out", "timeout", "circuit-breaker",
+    "connection", "rate limit", "credit", "payment", "skipped:",
+]
 
-    Failed runs (timeouts, API errors, JSON parse errors) are counted as zero-scoring
-    runs in precision/recall/F1 — the user wants timeouts to show as P=R=F1=0 rather
-    than be excluded from the average. Latency on failed runs is excluded (timeouts
-    would otherwise inflate the mean and mask whether the model is fast-when-it-works).
+
+def _is_infra_failure(error_str: str) -> bool:
+    """Classify a run error as infrastructure (provider) vs capability (model).
+
+    Infrastructure failures: credit exhaustion, routing errors, timeouts,
+    rate limits, connection issues, circuit-breaker skips.
+    Capability failures: JSON parse errors, empty content, or anything else
+    that implies the model got a chance to respond but produced unusable output.
+    """
+    s = (error_str or "").lower()
+    return any(p in s for p in _INFRA_FAILURE_PATTERNS)
+
+
+def _bootstrap_ci(values: list[float], n_boot: int = 10000, ci: float = 0.95) -> list[float]:
+    """Bootstrap 95% CI for the mean. Returns [lo, hi]."""
+    if len(values) < 2:
+        m = values[0] if values else 0.0
+        return [round(m, 4), round(m, 4)]
+    means = [statistics.fmean(_random.choices(values, k=len(values))) for _ in range(n_boot)]
+    means.sort()
+    lo = means[int((1 - ci) / 2 * n_boot)]
+    hi = means[int((1 + ci) / 2 * n_boot)]
+    return [round(lo, 4), round(hi, 4)]
+
+
+def aggregate(runs: list[dict]) -> dict:
+    """Compute mean / std / CI / min / max for precision, recall, F1, latency.
+
+    Separates infrastructure failures (provider errors) from capability failures
+    (model produced unusable output). Reports two score sets:
+      - scores_all_runs:        all failures score 0.0 (backward-compatible)
+      - scores_successful_only: P/R/F1 computed only over successful runs
+
+    Plus a reliability block showing success rate and failure breakdown.
     """
     successful = [r for r in runs if "error" not in r]
     failed = [r for r in runs if "error" in r]
+    infra_failures = [r for r in failed if _is_infra_failure(r.get("error", ""))]
+    capability_failures = [r for r in failed if not _is_infra_failure(r.get("error", ""))]
 
     def _stats(values: list[float]) -> dict:
         if not values:
-            return {"mean": None, "std": None, "min": None, "max": None}
+            return {"mean": None, "std": None, "min": None, "max": None, "ci_95": None}
         return {
             "mean": round(statistics.fmean(values), 4),
             "std": round(statistics.pstdev(values), 4) if len(values) > 1 else 0.0,
             "min": round(min(values), 4),
             "max": round(max(values), 4),
+            "ci_95": _bootstrap_ci(values),
         }
 
-    # Count failed runs as zero-scoring to make timeouts visible in the aggregate.
-    precisions = [r["score"]["precision"] for r in successful] + [0.0] * len(failed)
-    recalls    = [r["score"]["recall"]    for r in successful] + [0.0] * len(failed)
-    f1s        = [r["score"]["f1"]        for r in successful] + [0.0] * len(failed)
+    # scores_all_runs: failed runs score 0.0 (backward-compatible).
+    all_precisions = [r["score"]["precision"] for r in successful] + [0.0] * len(failed)
+    all_recalls    = [r["score"]["recall"]    for r in successful] + [0.0] * len(failed)
+    all_f1s        = [r["score"]["f1"]        for r in successful] + [0.0] * len(failed)
+
+    # scores_successful_only: only runs that produced valid output.
+    succ_precisions = [r["score"]["precision"] for r in successful]
+    succ_recalls    = [r["score"]["recall"]    for r in successful]
+    succ_f1s        = [r["score"]["f1"]        for r in successful]
 
     latencies: list[float] = []
     for r in successful:
@@ -1400,13 +1655,32 @@ def aggregate(runs: list[dict]) -> dict:
                 latencies.append(float(a.get("elapsed_s", 0)))
                 break
 
+    total = len(runs)
     return {
+        "reliability": {
+            "total_runs": total,
+            "successful_runs": len(successful),
+            "infra_failures": len(infra_failures),
+            "capability_failures": len(capability_failures),
+            "success_rate": round(len(successful) / max(1, total), 4),
+        },
+        "scores_all_runs": {
+            "precision": _stats(all_precisions),
+            "recall": _stats(all_recalls),
+            "f1": _stats(all_f1s),
+        },
+        "scores_successful_only": {
+            "precision": _stats(succ_precisions),
+            "recall": _stats(succ_recalls),
+            "f1": _stats(succ_f1s),
+        },
+        # Backward-compatible top-level aliases (point to scores_all_runs).
         "successful_runs": len(successful),
         "failed_runs": len(failed),
         "errors": [r.get("error") for r in failed][:5],
-        "precision": _stats(precisions),
-        "recall": _stats(recalls),
-        "f1": _stats(f1s),
+        "precision": _stats(all_precisions),
+        "recall": _stats(all_recalls),
+        "f1": _stats(all_f1s),
         "latency_s": _stats(latencies),
     }
 
@@ -1419,32 +1693,55 @@ def fmt_pm(stat: dict, places: int = 3) -> str:
     return f"{stat['mean']:.{places}f} ± {stat['std']:.{places}f}"
 
 
+def fmt_ci(stat: dict, places: int = 3) -> str:
+    """Format a stat dict as 'mean [lo, hi]' using 95% CI."""
+    if stat is None or stat.get("mean") is None:
+        return "—"
+    ci = stat.get("ci_95")
+    if ci:
+        return f"{stat['mean']:.{places}f} [{ci[0]:.{places}f}, {ci[1]:.{places}f}]"
+    return f"{stat['mean']:.{places}f}"
+
+
+def _reliability_str(agg: dict) -> str:
+    """Format reliability as 'ok/total' string."""
+    rel = agg.get("reliability", {})
+    total = rel.get("total_runs", agg.get("successful_runs", 0) + agg.get("failed_runs", 0))
+    ok = rel.get("successful_runs", agg.get("successful_runs", 0))
+    return f"{ok}/{total}"
+
+
 def render_summary_md(report: dict) -> str:
     lines: list[str] = []
-    lines.append("# Mini-experiment summary\n")
+    lines.append("# AGEN-OPS-6 benchmark summary\n")
     lines.append(f"Generated: {report['timestamp']}  ")
     lines.append(f"Total runs requested per (workflow, model[, drawing]) combination: {report['runs_per_combo']}\n")
 
-    lines.append("## Headline\n")
-    lines.append("| Workflow | Best model (by F1) | Precision (mean ± std) | Recall (mean ± std) | F1 | Latency mean (s) |")
-    lines.append("|---|---|---|---|---|---|")
+    lines.append("## Headline (successful runs only)\n")
+    lines.append("| Workflow | Best model (by F1) | F1 [95% CI] | Runs ok | Latency mean (s) |")
+    lines.append("|---|---|---|---|---|")
     for wf_key, wf_block in report["workflows"].items():
         best = None
         for combo in wf_block["combos"]:
             agg = combo["aggregate"]
-            f1m = (agg.get("f1") or {}).get("mean")
-            if f1m is None:
+            # Use successful-only F1 as primary ranking metric.
+            succ_f1 = (agg.get("scores_successful_only", {}).get("f1") or agg.get("f1") or {}).get("mean")
+            if succ_f1 is None:
                 continue
-            if best is None or f1m > best["aggregate"]["f1"]["mean"]:
+            if best is None:
                 best = combo
+            else:
+                best_f1 = (best["aggregate"].get("scores_successful_only", {}).get("f1") or best["aggregate"].get("f1") or {}).get("mean", 0)
+                if succ_f1 > best_f1:
+                    best = combo
         if best is None:
             continue
         agg = best["aggregate"]
         label = best["model"] + (f" / {best.get('drawing') or best.get('pdf')}" if (best.get('drawing') or best.get('pdf')) else "")
+        succ_f1_stat = agg.get("scores_successful_only", {}).get("f1") or agg.get("f1") or {}
         lines.append(
-            f"| {wf_block['name']} | {label} | {fmt_pm(agg['precision'])} | "
-            f"{fmt_pm(agg['recall'])} | "
-            f"{(agg['f1']['mean'] if agg['f1']['mean'] is not None else 0):.3f} | "
+            f"| {wf_block['name']} | {label} | {fmt_ci(succ_f1_stat)} | "
+            f"{_reliability_str(agg)} | "
             f"{(agg['latency_s']['mean'] if agg['latency_s']['mean'] is not None else 0):.1f} |"
         )
     lines.append("")
@@ -1452,16 +1749,20 @@ def render_summary_md(report: dict) -> str:
     for wf_key, wf_block in report["workflows"].items():
         lines.append(f"## {wf_block['name']}\n")
         lines.append(wf_block.get("description", "") + "\n")
-        lines.append("| Model | Drawing/PDF | Runs ok | Precision (mean ± std) | Recall (mean ± std) | F1 (mean) | Latency mean (s) |")
-        lines.append("|---|---|---|---|---|---|---|")
+        lines.append("| Model | Drawing/PDF | Runs ok | F1 all [CI] | F1 succ [CI] | P succ | R succ | Latency (s) |")
+        lines.append("|---|---|---|---|---|---|---|---|")
         for combo in wf_block["combos"]:
             agg = combo["aggregate"]
             item_label = combo.get("drawing") or combo.get("pdf") or "—"
+            all_f1 = agg.get("scores_all_runs", {}).get("f1") or agg.get("f1") or {}
+            succ_f1 = agg.get("scores_successful_only", {}).get("f1") or agg.get("f1") or {}
+            succ_p = agg.get("scores_successful_only", {}).get("precision") or agg.get("precision") or {}
+            succ_r = agg.get("scores_successful_only", {}).get("recall") or agg.get("recall") or {}
             lines.append(
                 f"| {combo['model']} | {item_label} | "
-                f"{agg['successful_runs']}/{agg['successful_runs'] + agg['failed_runs']} | "
-                f"{fmt_pm(agg['precision'])} | {fmt_pm(agg['recall'])} | "
-                f"{(agg['f1']['mean'] if agg['f1']['mean'] is not None else 0):.3f} | "
+                f"{_reliability_str(agg)} | "
+                f"{fmt_ci(all_f1)} | {fmt_ci(succ_f1)} | "
+                f"{fmt_pm(succ_p)} | {fmt_pm(succ_r)} | "
                 f"{(agg['latency_s']['mean'] if agg['latency_s']['mean'] is not None else 0):.1f} |"
             )
         lines.append("")
@@ -1483,12 +1784,16 @@ def print_stdout_summary(report: dict) -> None:
             item_label = combo.get("drawing") or combo.get("pdf")
             if item_label:
                 label = label[:35] + f" / {item_label[:24]:25s}"
-            ok = f"{agg['successful_runs']}/{agg['successful_runs'] + agg['failed_runs']}"
-            p = fmt_pm(agg["precision"])
-            r = fmt_pm(agg["recall"])
-            f1m = agg["f1"]["mean"] if agg["f1"]["mean"] is not None else 0
+            ok = _reliability_str(agg)
+            # Show successful-only F1 as primary, with reliability qualifier.
+            succ_f1_stat = agg.get("scores_successful_only", {}).get("f1") or agg.get("f1") or {}
+            f1m = succ_f1_stat.get("mean", 0) or 0
+            ci = succ_f1_stat.get("ci_95")
+            ci_str = f" [{ci[0]:.3f},{ci[1]:.3f}]" if ci else ""
+            p = fmt_pm(agg.get("scores_successful_only", {}).get("precision") or agg.get("precision", {}))
+            r = fmt_pm(agg.get("scores_successful_only", {}).get("recall") or agg.get("recall", {}))
             lat = agg["latency_s"]["mean"] if agg["latency_s"]["mean"] is not None else 0
-            print(f"  {label:60s}  runs={ok:5s}  P={p}  R={r}  F1={f1m:.3f}  lat={lat:.1f}s")
+            print(f"  {label:60s}  runs={ok:5s}  P={p}  R={r}  F1={f1m:.3f}{ci_str}  lat={lat:.1f}s")
     print()
 
 
@@ -1499,7 +1804,7 @@ def short_model(m: str) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Tensorix mini-experiment runner — multi-model, multi-run, statistical aggregation.")
+    parser = argparse.ArgumentParser(description="AGEN-OPS-6 benchmark runner — multi-backend, multi-model, multi-run, statistical aggregation.")
     parser.add_argument("--workflow", choices=["compliance", "dims", "dims_ocr", "dims_vlm", "docs", "docs_vlm", "schedule_read", "schedule_write", "all"], default="all")
     parser.add_argument("--models", nargs="+", default=None,
                         help="Model ids to compare. If omitted, uses per-workflow defaults: "
@@ -1519,7 +1824,42 @@ def main() -> None:
     parser.add_argument("--clear-cache", action="store_true",
                         help="Delete OCR + PDF text + PDF page caches at start of run, forcing re-OCR / re-parse / re-render. "
                              "Use after an interrupted run if scores look suspicious (P=R=0 across the board often means a corrupted cache).")
+    parser.add_argument("--check-credits", action="store_true",
+                        help="Check OpenRouter credit balance before running. Prints a warning if balance is low.")
     args = parser.parse_args()
+
+    if args.check_credits:
+        or_key = os.environ.get("OPENROUTER_API_KEY")
+        if or_key:
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    "https://openrouter.ai/api/v1/auth/key",
+                    headers={"Authorization": f"Bearer {or_key}"},
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    info = json.loads(resp.read().decode())
+                    balance = info.get("data", {}).get("limit_remaining")
+                    usage = info.get("data", {}).get("usage")
+                    label = info.get("data", {}).get("label", "?")
+                    print(f"OpenRouter credit check:")
+                    print(f"  Key label:  {label}")
+                    if balance is not None:
+                        print(f"  Remaining:  ${balance:.2f}")
+                        if balance < 1.0:
+                            print(f"  ⚠ WARNING: Balance is low (${balance:.2f}). Top up before a full run.")
+                    elif usage is not None:
+                        print(f"  Usage:      ${usage:.4f}")
+                        print(f"  (No hard limit set — usage is pay-as-you-go)")
+                    else:
+                        print(f"  (Could not determine balance from API response)")
+                    print()
+            except Exception as e:
+                print(f"OpenRouter credit check failed: {e}", file=sys.stderr)
+                print()
+        else:
+            print("OpenRouter credit check skipped (OPENROUTER_API_KEY not set).")
+            print()
 
     if args.clear_cache:
         cleared = []
@@ -1540,17 +1880,16 @@ def main() -> None:
 
     workflows: list[str]
     if args.workflow == "all":
+        # dims_ocr dropped from default (OCR bottleneck; see docs/FIRST_RUN_INSIGHTS.md).
+        # Still runnable via --workflow dims_ocr for appendix / replication.
+        # docs_vlm dropped from default (0/10 in first run due to provider failures;
+        # docs with OCR fallback is the primary PDF extraction path).
         workflows = ["compliance", "dims", "docs", "schedule_read", "schedule_write"]
-        if not args.no_extract:
-            workflows.insert(2, "dims_ocr")
-        # VLM workflows only included automatically if OpenRouter is configured
-        # (Tensorix doesn't carry a fits-our-hardware VLM, so OpenRouter is the only path).
-        if os.environ.get("OPENROUTER_API_KEY"):
-            insert_at = 3 if not args.no_extract else 2
-            workflows.insert(insert_at, "dims_vlm")
-            # docs_vlm goes right after docs for symmetric grouping
-            docs_idx = workflows.index("docs")
-            workflows.insert(docs_idx + 1, "docs_vlm")
+        # dims_vlm is the primary vision workflow — include if OpenRouter or
+        # any VLM-capable backend is configured.
+        if os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
+            dims_idx = workflows.index("dims")
+            workflows.insert(dims_idx + 1, "dims_vlm")
     else:
         workflows = [args.workflow]
 
@@ -1569,12 +1908,13 @@ def main() -> None:
     print(f"Workers:      {args.workers}  (parallel combos per workflow)")
     print(f"Delay:        {args.delay}s  (sleep before each LLM call)")
     print(f"Temperature:  {args.temperature}")
-    print(f"Tensorix URL: {os.environ.get('TENSORIX_BASE_URL')}")
+    print(f"Tensorix URL: {os.environ.get('TENSORIX_BASE_URL', '(not configured)')}")
     if os.environ.get('OPENROUTER_API_KEY'):
-        print(f"OpenRouter URL: {os.environ.get('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')}  (used for: " +
-              ", ".join(m for m, b in MODEL_BACKEND.items() if b == 'openrouter') + ")")
+        print(f"OpenRouter:   {os.environ.get('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')}")
     else:
-        print("OpenRouter URL: (not configured — OPENROUTER_API_KEY missing; OpenRouter-only models will error)")
+        print("OpenRouter:   (not configured — OPENROUTER_API_KEY missing)")
+    print(f"OpenAI:       {'configured' if os.environ.get('OPENAI_API_KEY') else '(not configured — OPENAI_API_KEY missing)'}")
+    print(f"Anthropic:    {'configured' if os.environ.get('ANTHROPIC_API_KEY') else '(not configured — ANTHROPIC_API_KEY missing)'}")
     print()
 
     pool = make_client_pool()

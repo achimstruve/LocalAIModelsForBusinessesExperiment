@@ -6,7 +6,7 @@ This document describes the scoring rubrics, sampling settings, ground-truth con
 
 ## 1. Purpose and intended use
 
-AGEN-OPS-6 measures whether open-source LLMs, served on commodity GPU hardware, can reliably perform six categories of assistive-AI tasks that small and mid-sized manufacturing / engineering firms (10--500 employees) actually need. The benchmark is designed for:
+AGEN-OPS-6 measures whether open-source and closed-source LLMs can reliably perform six categories of assistive-AI tasks that small and mid-sized manufacturing / engineering firms (10--500 employees) actually need. Open-source models are benchmarked for local deployment on commodity GPU hardware; closed-source models (GPT-5.5, Claude Opus 4.7) serve as reference ceilings. The benchmark is designed for:
 
 - **Procurement teams** evaluating whether a local-hosted open model can replace or augment a specific workflow before committing to hardware or SaaS spend.
 - **AI consultants** positioning model recommendations with measurable, operations-grounded evidence rather than generic benchmark scores.
@@ -15,7 +15,6 @@ AGEN-OPS-6 measures whether open-source LLMs, served on commodity GPU hardware, 
 The benchmark is **not** designed for:
 
 - Ranking models on general intelligence or reasoning ability.
-- Evaluating closed-source / API-only models (though nothing prevents it technically).
 - Safety, alignment, or toxicity evaluation.
 
 ---
@@ -184,7 +183,9 @@ f1        = harmonic mean
 1. `part_id` matches (case-insensitive).
 2. `stage` matches (case-insensitive substring in either direction).
 3. `column` matches exactly.
-4. Value matches: either exact/substring match (for dates), or at least one keyword present (for status strings like "delay", "rebaselined").
+4. Value matches: either exact/substring match (for dates), or at least one keyword present (for status strings like "delay", "rebaselined"). For date fields with `expected_value_alternatives`, the evaluator also accepts any alternative value.
+
+**Weekend edge case (ED-4, ED-5):** The ground truth expects CMM inspection on 2026-05-23 (a Saturday). Models reasoning about business days may correctly set 2026-05-25 (Monday) instead. Both dates are accepted. Manufacturing schedules can legitimately run on weekends, but a model accounting for business days is not wrong either.
 
 **Forbidden row violations:** Any model edit touching a protected row (any column) is flagged as a violation. This is reported separately from precision/recall as `forbidden_row_violations` in the raw output.
 
@@ -224,8 +225,34 @@ All ground-truth files were author-generated (single author: the benchmark creat
 For each (workflow, model) combination (or (workflow, model, drawing/PDF) triple for multi-input workflows):
 
 1. N runs are executed (default 10).
-2. Runs that fail with an error (API timeout, JSON parse failure, etc.) score 0.0 on all metrics but are **included** in mean/std calculations. They are excluded from latency statistics.
-3. Per-combination aggregates are computed: mean, population standard deviation, min, max for precision, recall, F1, and latency.
+2. Failed runs are categorized as **infrastructure failures** or **capability failures** (see 6.1).
+3. Two score sets are computed: `scores_all_runs` (failures score 0.0) and `scores_successful_only` (failures excluded).
+4. Per-combination aggregates include: mean, population standard deviation, 95% bootstrap confidence interval, min, max for precision, recall, F1, and latency.
+
+### 6.1 Infrastructure vs capability failure separation
+
+Failed runs are classified by error message pattern matching:
+
+- **Infrastructure failures:** HTTP 402 (credit exhaustion), 404 (routing failure), 429 (rate limit), timeouts, connection errors, circuit-breaker skips. These reflect provider-side issues, not model limitations.
+- **Capability failures:** JSON parse errors, empty content, or other errors where the model received the prompt but produced unusable output.
+
+The summary reports both score sets:
+- `scores_all_runs`: All failures score 0.0 on P/R/F1. This penalizes models on unreliable providers.
+- `scores_successful_only`: P/R/F1 computed only over runs that produced valid output. This measures model capability independent of provider infrastructure.
+
+The `reliability` block reports total runs, successful runs, infra failures, capability failures, and success rate.
+
+### 6.2 Bootstrap confidence intervals
+
+For each metric (precision, recall, F1), a 95% bootstrap confidence interval is computed:
+
+1. Resample the N metric values with replacement, 10,000 times.
+2. Compute the mean of each bootstrap sample.
+3. The 2.5th and 97.5th percentiles of the bootstrap means form the 95% CI.
+
+With N=10, CIs are wide. They make the uncertainty visible rather than hiding it behind a point estimate.
+
+### 6.3 Verdict heuristics
 
 **Verdict heuristics** (for human interpretation, not formal thresholds):
 
@@ -234,6 +261,20 @@ For each (workflow, model) combination (or (workflow, model, drawing/PDF) triple
 | Precision >= 0.85 **and** recall >= 0.85, std < 0.10 | Strong pass |
 | Precision >= 0.70 **and** recall >= 0.70 | Pass |
 | Either metric < 0.70 | Weak / fail |
+
+### 6.4 Provider response headers
+
+The harness captures provider-identifying response headers when available:
+
+| Header | Source | Purpose |
+|---|---|---|
+| `x-provider` | OpenRouter | Which backend provider served the request |
+| `openrouter-processing-ms` | OpenRouter | Backend processing time |
+| `x-request-id` | OpenAI, OpenRouter | Request tracing |
+| `served_model` | All | Actual model ID returned (may differ from requested) |
+| `x-ratelimit-*` | OpenAI, OpenRouter | Rate limit status |
+
+These headers are stored in `metadata.response_headers` in the raw results JSON, enabling post-hoc analysis of provider routing and version consistency.
 
 ---
 
@@ -247,7 +288,7 @@ For each (workflow, model) combination (or (workflow, model, drawing/PDF) triple
 
 4. **Synthetic data.** All inputs are synthetic. While designed to mirror real-world complexity (mixed units, missing fields, borderline values, scanned-document noise), they may not capture the full distribution of messiness found in production documents.
 
-5. **Model provenance is not verified.** The harness requests a model by ID, but neither Tensorix nor OpenRouter provides cryptographic attestation that the weights actually served match the requested checkpoint. OpenRouter is a routing layer that dispatches to downstream providers (Together, Fireworks, DeepInfra, etc.); the harness constrains routing to fp16/bf16/fp8 quantizations and parameter-compliant providers, but a backend could still serve a subtly different checkpoint, post-training variant, or silently updated weight revision. Tensorix presents the same trust-the-label situation. The harness does not currently capture provider-identifying response headers (e.g. OpenRouter's `x-provider`). Results should therefore be read as "performance of the model ID as served by provider X on date Y" rather than "performance of a verified model artifact."
+5. **Model provenance is trust-based.** The harness requests a model by ID, but no provider offers cryptographic attestation that the served weights match the requested checkpoint. OpenRouter dispatches to downstream providers (Together, Fireworks, DeepInfra, etc.); from v0.5, the harness captures `x-provider` and `served_model` headers for traceability, but a backend could still serve a subtly different checkpoint or quantization variant. Results should be read as "performance of the model ID as served by provider X on date Y" rather than "performance of a verified model artifact."
 
 6. **Temperature sensitivity.** The default temperature of 0.1 was chosen for reproducibility. Higher temperatures may produce different score distributions. The benchmark does not sweep temperature.
 
@@ -256,6 +297,8 @@ For each (workflow, model) combination (or (workflow, model, drawing/PDF) triple
 8. **Vision workflows depend on provider support.** The `dims_vlm` and `docs_vlm` workflows require a vision-language model API that accepts base64-encoded images. Not all providers support this uniformly.
 
 9. **False-positive cost is not weighted.** In real-world use, a false positive on compliance (unnecessary material rejection) has very different cost from a false positive on schedule_read (investigating a non-issue). The benchmark treats all FPs equally.
+
+10. **Drawing-1 balloon ambiguity.** Engineering drawing 1 (`technical-drawing-1.jpg`) has known dimension callout positioning ambiguity (documented in `data/dims/DRAWING_FIXES.md`). This makes it consistently the hardest drawing for all models across both dims_ocr and dims_vlm workflows. The ground truth reflects the intended reading; the ambiguity biases against all models equally.
 
 ---
 
@@ -275,10 +318,17 @@ The harness writes full raw outputs (including model responses) to `results/run_
 
 ## 9. Scope and roadmap
 
-This benchmark is a first iteration. It is intended as a practical, transparent starting point for operations-grounded LLM evaluation rather than a definitive measurement framework. Known areas for future extension include:
+This benchmark is in its second iteration (v0.5). Known areas for future extension include:
 
-- **Model provenance logging.** Capture provider-identifying response headers (e.g. OpenRouter's `x-provider`, response `model` field) to strengthen traceability from result to actual serving infrastructure.
 - **Additional workflows and data.** Expand beyond the current eight workflow variants with more diverse inputs (e.g. multilingual documents, larger spreadsheets, multi-page engineering drawings).
 - **Fine-tuning comparison.** Evaluate whether LoRA or full fine-tuning on a small domain-specific corpus (e.g. compliance reasoning) meaningfully shifts the score distribution vs. off-the-shelf models.
 - **Multi-rater ground truth.** Add independent second-rater validation of ground-truth labels to assess and mitigate single-author bias.
 - **Semantic matching.** Replace or supplement keyword-based scoring with embedding-similarity matching to reduce false negatives from unexpected phrasing.
+
+### Implemented in v0.5
+
+- **Model provenance logging.** Response headers (`x-provider`, `served_model`, rate limits) are now captured and stored in metadata (see section 6.4).
+- **Infrastructure failure separation.** Failed runs are categorized as infra vs capability, with separate score sets (see section 6.1).
+- **Bootstrap confidence intervals.** 95% CIs on all metrics (see section 6.2).
+- **Closed-model anchor points.** GPT-5.5 and Claude Opus 4.7 as reference ceilings.
+- **Multi-backend support.** Tensorix, OpenRouter, OpenAI (direct), and Anthropic backends.

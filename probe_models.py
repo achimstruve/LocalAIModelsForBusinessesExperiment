@@ -1,19 +1,21 @@
 """
-Probe Tensorix and OpenRouter for available models matching keywords of interest.
+Probe Tensorix, OpenRouter, and OpenAI for available models matching keywords of interest.
 
 Usage:
     uv run python probe_models.py                 # all VLM-relevant models
     uv run python probe_models.py qwen3 qwen3.5   # narrow by keyword(s)
+    uv run python probe_models.py --check-credits  # check OpenRouter credit balance
 
-Reads TENSORIX_API_KEY/BASE_URL and OPENROUTER_API_KEY/BASE_URL from .env.
-Calls each backend's /models endpoint and prints the matching model ids
-plus context length and pricing if exposed.
+Reads API keys from .env. Calls each backend's /models endpoint and prints the
+matching model ids plus context length and pricing if exposed.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+import urllib.request
 from pathlib import Path
 
 # Reuse the .env loader from run_experiment.py
@@ -55,6 +57,9 @@ DEFAULT_KEYWORDS = [
     "-vl",
     "-vision",
     "vision-",
+    "gpt-5",
+    "claude",
+    "opus",
 ]
 
 
@@ -102,8 +107,48 @@ def probe(name: str, base_url: str | None, api_key: str | None, keywords: list[s
         print(f"  {m.id}{ctx_str}{pricing_str}")
 
 
+def check_openrouter_credits() -> None:
+    """Check OpenRouter credit balance via /api/v1/auth/key."""
+    print(f"\n{'='*78}\nOpenRouter Credit Check\n{'='*78}")
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        print("  (skipped — OPENROUTER_API_KEY not set)")
+        return
+    try:
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/auth/key",
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            info = json.loads(resp.read().decode())
+            data = info.get("data", {})
+            label = data.get("label", "?")
+            limit_remaining = data.get("limit_remaining")
+            usage = data.get("usage")
+            print(f"  Key label:  {label}")
+            if limit_remaining is not None:
+                print(f"  Remaining:  ${limit_remaining:.2f}")
+                if limit_remaining < 1.0:
+                    print(f"  WARNING: Balance is low. Top up before a full run.")
+            elif usage is not None:
+                print(f"  Usage:      ${usage:.4f}")
+                print(f"  (No hard limit — pay-as-you-go)")
+            else:
+                print(f"  (Could not determine balance)")
+    except Exception as e:
+        print(f"  ERROR: {e}")
+
+
 def main() -> None:
-    keywords = sys.argv[1:] if len(sys.argv) > 1 else DEFAULT_KEYWORDS
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = [a for a in sys.argv[1:] if a.startswith("--")]
+
+    if "--check-credits" in flags:
+        check_openrouter_credits()
+        if not args and len(flags) == 1:
+            return  # only credit check requested
+
+    keywords = args if args else DEFAULT_KEYWORDS
     print(f"Filtering by keywords: {keywords}")
 
     probe(
@@ -118,6 +163,15 @@ def main() -> None:
         os.environ.get("OPENROUTER_API_KEY"),
         keywords,
     )
+    probe(
+        "OpenAI (direct)",
+        "https://api.openai.com/v1",
+        os.environ.get("OPENAI_API_KEY"),
+        keywords,
+    )
+
+    if "--check-credits" in flags:
+        check_openrouter_credits()
 
 
 if __name__ == "__main__":

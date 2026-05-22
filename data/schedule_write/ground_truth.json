@@ -34,14 +34,18 @@
       "part_id": "P-100",
       "stage": "CMM inspection",
       "column": "planned_start",
-      "expected_value": "2026-05-23"
+      "expected_value": "2026-05-23",
+      "expected_value_alternatives": ["2026-05-25"],
+      "note": "2026-05-23 is a Saturday. Models reasoning about business days may correctly set Monday 2026-05-25 instead. Both are accepted."
     },
     {
       "id": "ED-5",
       "part_id": "P-100",
       "stage": "CMM inspection",
       "column": "planned_finish",
-      "expected_value": "2026-05-23"
+      "expected_value": "2026-05-23",
+      "expected_value_alternatives": ["2026-05-25"],
+      "note": "2026-05-23 is a Saturday. Models reasoning about business days may correctly set Monday 2026-05-25 instead. Both are accepted."
     },
     {
       "id": "ED-6",
