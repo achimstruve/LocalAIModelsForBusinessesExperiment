@@ -2,8 +2,8 @@
 AGEN-OPS-6 — SME-AI workflow benchmark (v0.5).
 
 Tests open-source and closed-source LLMs on eight workflow variants covering
-real-world SME operations tasks. Multi-backend: Tensorix, OpenRouter,
-OpenAI (direct), Anthropic.
+real-world SME operations tasks. Two backends: Tensorix (open models) and
+OpenRouter (VLMs + closed-model anchors like GPT-5.5 and Claude Opus).
 
 Default workflows (--workflow all):
     compliance      Material certificate compliance (text)
@@ -20,6 +20,7 @@ Additional (run explicitly via --workflow):
 Each (workflow, model[, drawing/PDF]) combination is run N times (default 10)
 and aggregated with mean / std / CI / min / max for precision, recall, F1, latency.
 Infrastructure failures (timeouts, 402, 404) are separated from capability failures.
+Transient errors (429, 502, 503) are retried automatically with exponential backoff.
 
 Setup:
     uv sync
@@ -106,119 +107,6 @@ except ImportError:
 import random as _random
 
 
-# ----------------------------- Anthropic adapter --------------------------- #
-
-class _AnthropicMessage:
-    """Mimics openai.types.chat.ChatCompletionMessage."""
-    def __init__(self, content: str):
-        self.content = content
-
-class _AnthropicChoice:
-    """Mimics openai.types.chat.ChatCompletion.choices[0]."""
-    def __init__(self, content: str):
-        self.message = _AnthropicMessage(content)
-
-class _AnthropicResponse:
-    """Mimics openai.types.chat.ChatCompletion."""
-    def __init__(self, content: str, headers: dict | None = None):
-        self.choices = [_AnthropicChoice(content)]
-        self._headers = headers or {}
-
-class _AnthropicCompletionsNamespace:
-    """Wraps anthropic.Anthropic to look like client.chat.completions.create()."""
-    def __init__(self, anthropic_client):
-        self._client = anthropic_client
-
-    def create(self, *, model: str, messages: list[dict], temperature: float = 0.1,
-               response_format: dict | None = None, timeout: float | None = None,
-               **kwargs) -> _AnthropicResponse:
-        # Translate OpenAI message format → Anthropic format.
-        system_text = ""
-        anthropic_messages = []
-        for msg in messages:
-            if msg["role"] == "system":
-                system_text = msg["content"] if isinstance(msg["content"], str) else str(msg["content"])
-            else:
-                # Handle vision content (list of content blocks).
-                if isinstance(msg["content"], list):
-                    blocks = []
-                    for block in msg["content"]:
-                        if block["type"] == "text":
-                            blocks.append({"type": "text", "text": block["text"]})
-                        elif block["type"] == "image_url":
-                            url = block["image_url"]["url"]
-                            if url.startswith("data:"):
-                                # Parse data URL: data:<mime>;base64,<data>
-                                header, b64_data = url.split(",", 1)
-                                mime = header.split(":")[1].split(";")[0]
-                                blocks.append({
-                                    "type": "image",
-                                    "source": {
-                                        "type": "base64",
-                                        "media_type": mime,
-                                        "data": b64_data,
-                                    },
-                                })
-                    anthropic_messages.append({"role": msg["role"], "content": blocks})
-                else:
-                    anthropic_messages.append({"role": msg["role"], "content": msg["content"]})
-
-        # If JSON mode requested, add instruction to system prompt.
-        if response_format and response_format.get("type") == "json_object":
-            system_text += "\n\nIMPORTANT: Respond with valid JSON only. Do not include any text outside the JSON object."
-
-        # Strip extra_body and other OpenAI-specific kwargs.
-        kwargs.pop("extra_body", None)
-        kwargs.pop("seed", None)
-
-        create_kwargs: dict[str, Any] = {
-            "model": model,
-            "max_tokens": 8192,
-            "temperature": temperature,
-            "messages": anthropic_messages,
-        }
-        if system_text:
-            create_kwargs["system"] = system_text
-        if timeout:
-            create_kwargs["timeout"] = timeout
-
-        resp = self._client.messages.create(**create_kwargs)
-        content = resp.content[0].text if resp.content else ""
-        headers = {}
-        if hasattr(resp, '_response') and hasattr(resp._response, 'headers'):
-            raw_headers = resp._response.headers
-            for h in ("request-id", "anthropic-ratelimit-requests-limit",
-                       "anthropic-ratelimit-requests-remaining",
-                       "anthropic-ratelimit-tokens-limit",
-                       "anthropic-ratelimit-tokens-remaining"):
-                if h in raw_headers:
-                    headers[h] = raw_headers[h]
-        return _AnthropicResponse(content, headers)
-
-class _AnthropicChatNamespace:
-    """Provides client.chat.completions interface."""
-    def __init__(self, completions: _AnthropicCompletionsNamespace):
-        self.completions = completions
-
-class AnthropicAdapter:
-    """Wraps anthropic.Anthropic() to provide a .chat.completions.create()-compatible interface.
-
-    This allows the rest of the harness to treat Anthropic exactly like an OpenAI client.
-    Key translations:
-      - messages (OpenAI) → system + messages (Anthropic)
-      - response_format={"type": "json_object"} → system prompt suffix
-      - Vision: image_url data URLs → Anthropic base64 image blocks
-      - Response: resp.content[0].text → resp.choices[0].message.content
-    """
-    def __init__(self, api_key: str):
-        try:
-            import anthropic
-        except ImportError:
-            raise RuntimeError("anthropic package not installed. Run: uv add anthropic")
-        self._client = anthropic.Anthropic(api_key=api_key, max_retries=0)
-        self.chat = _AnthropicChatNamespace(_AnthropicCompletionsNamespace(self._client))
-
-
 # Per-API-call timeout. We saw individual gpt-oss-20b runs spend 188s and 370s on
 # docs because the OpenAI SDK's default max_retries=2 turned a single timeout
 # into a chain of retries. RUN_TIMEOUT_S caps each attempt; max_retries=0 on the
@@ -281,6 +169,39 @@ def threading_main_thread() -> bool:
     return threading.current_thread() is threading.main_thread()
 
 
+# ----------------------------- transient-error retry ----------------------- #
+
+# Transient HTTP errors (429 rate-limit, 502/503 bad gateway, Cloudflare 520/522/524)
+# are worth retrying with backoff. Fatal errors (402 payment, 404 not found, 401/403
+# auth) should fail immediately. Timeouts are handled separately by the existing
+# circuit-breaker logic and are NOT retried here.
+MAX_TRANSIENT_RETRIES = 2
+TRANSIENT_BACKOFF_BASE = 2.0  # seconds; actual wait = base * 2^attempt → 2s, 4s
+
+
+def _is_transient_error(e: Exception) -> bool:
+    """Return True for HTTP errors that are worth retrying with backoff.
+
+    Covers rate limits (429), bad gateway (502/503), Cloudflare errors (520/522/524),
+    and connection-level failures (reset, refused, aborted)."""
+    status = getattr(e, "status_code", None)
+    if status in (429, 502, 503, 520, 522, 524):
+        return True
+    s = str(e).lower()
+    cls = e.__class__.__name__.lower()
+    if "apiconnectionerror" in cls or "connectionerror" in cls:
+        return True
+    if "connection" in s and ("reset" in s or "refused" in s or "aborted" in s):
+        return True
+    return False
+
+
+def _is_fatal_api_error(e: Exception) -> bool:
+    """Return True for API errors that should NOT be retried (auth, payment, not-found)."""
+    status = getattr(e, "status_code", None)
+    return status in (401, 402, 403, 404)
+
+
 def _model_extra_kwargs(model: str) -> dict:
     """Return per-model kwargs to merge into chat.completions.create().
 
@@ -295,16 +216,14 @@ def _model_extra_kwargs(model: str) -> dict:
                  results in 1-5 seconds while quality providers take 60-100s.
                  Constrain routing with relaxed quantization filters (int8 allowed
                  after first-run 404s) and allow fallbacks.
-    * Anthropic / direct OpenAI — no extra_body needed (adapter handles translation).
+    * Closed-source anchors (GPT-5.5, Claude Opus) routed through OpenRouter
+                 with minimal constraints (no quantization filter — they're served
+                 by the original provider, not a quantized replica).
 
     Also injects a per-call seed to defeat any request-level caching the
     provider might do.
     """
     backend = MODEL_BACKEND.get(model, "tensorix")
-
-    # Anthropic adapter handles its own kwargs; skip all OpenAI-specific extras.
-    if backend == "anthropic":
-        return {}
 
     extras: dict = {}
     extras["seed"] = int(time.time() * 1_000_000) & 0x7FFFFFFF
@@ -313,13 +232,22 @@ def _model_extra_kwargs(model: str) -> dict:
     # OpenRouter provider-routing — relaxed from v0.4 (added int8 to fix 404s
     # on VLM endpoints; removed require_parameters for VLM models where it
     # caused routing failures because backends don't advertise seed support).
+    # Closed-source anchors (openai/gpt-5*, anthropic/*) skip quantization
+    # filters entirely — they're served by the original provider.
     if backend == "openrouter":
+        is_closed = model.startswith("openai/gpt-5") or model.startswith("anthropic/")
         is_vlm = any(tag in model for tag in ("-vl-", "-vl ", "vlm", "-vision", "vision-", "qwen3.5-122b", "qwen3.5-397b"))
-        extra_body["provider"] = {
-            "require_parameters": not is_vlm,   # relax for VLMs (seed not always advertised)
-            "quantizations": ["fp16", "bf16", "fp8", "int8"],  # allow int8 (fixes first-run 404s)
-            "allow_fallbacks": True,
-        }
+        if is_closed:
+            extra_body["provider"] = {
+                "require_parameters": False,
+                "allow_fallbacks": True,
+            }
+        else:
+            extra_body["provider"] = {
+                "require_parameters": not is_vlm,   # relax for VLMs (seed not always advertised)
+                "quantizations": ["fp16", "bf16", "fp8", "int8"],  # allow int8 (fixes first-run 404s)
+                "allow_fallbacks": True,
+            }
 
     if model.startswith("openai/gpt-oss"):
         extra_body["reasoning_effort"] = "low"
@@ -358,9 +286,9 @@ MODEL_BACKEND: dict[str, str] = {
     "qwen/qwen3.5-397b-a17b":            "openrouter",  # flagship multimodal-native, ~17B active
     "qwen/qwen3-vl-235b-a22b-thinking":  "openrouter",  # 235B Thinking variant — STEM/technical
     "qwen/qwen3-vl-30b-a3b-instruct":    "openrouter",  # 30B MoE VL, ~3B active — Tier 0.5
-    # Anchor models — closed-source reference ceilings.
-    "gpt-5.5-2026-04-23":               "openai_direct",  # GPT-5.5 via direct OpenAI API
-    "claude-opus-4-6":                   "anthropic",       # Claude Opus 4.6 via Anthropic API
+    # Anchor models — closed-source reference ceilings, routed via OpenRouter.
+    "openai/gpt-5.5":                   "openrouter",     # GPT-5.5 via OpenRouter
+    "anthropic/claude-opus-4.6":        "openrouter",     # Claude Opus 4.6 via OpenRouter
 }
 
 # Workflow-aware defaults (applied when --models is NOT passed).
@@ -369,8 +297,8 @@ MODEL_BACKEND: dict[str, str] = {
 # keeps Qwen 2.5 72B as the primary baseline plus three downside comparators.
 # Anchor (closed-source) models — reference ceilings, not local-deployment candidates.
 _ANCHOR_MODELS = [
-    "gpt-5.5-2026-04-23",                  # GPT-5.5 via direct OpenAI API
-    "claude-opus-4-6",                     # Claude Opus 4.6 via Anthropic API
+    "openai/gpt-5.5",                      # GPT-5.5 via OpenRouter
+    "anthropic/claude-opus-4.6",           # Claude Opus 4.6 via OpenRouter
 ]
 
 _FULL_LADDER = [
@@ -427,15 +355,13 @@ class ClientPool:
     """Lazy multi-backend client factory.
 
     Tensorix and OpenRouter both speak the OpenAI Chat Completions schema, so we
-    keep one OpenAI() instance per backend. OpenAI direct uses the same SDK with
-    a different base URL. Anthropic uses AnthropicAdapter for format translation.
+    keep one OpenAI() instance per backend. Anchor models (GPT-5.5, Claude Opus)
+    are routed through OpenRouter — no separate API keys needed.
     """
 
     def __init__(self) -> None:
         self._tensorix = None
         self._openrouter = None
-        self._openai_direct = None
-        self._anthropic = None
         self._lock = threading.Lock()
 
     def _backend_for(self, model: str) -> str:
@@ -445,6 +371,7 @@ class ClientPool:
         backend = self._backend_for(model)
         # max_retries=0 disables the OpenAI SDK's automatic retry-on-timeout behaviour
         # (default = 2). Without this, a single 150s timeout becomes ~450s wall clock.
+        # Our own _create_with_retry handles transient-error retries selectively.
         with self._lock:
             if backend == "openrouter":
                 if self._openrouter is None:
@@ -454,20 +381,6 @@ class ClientPool:
                         raise RuntimeError(f"OPENROUTER_API_KEY not set (needed for {model}). Add it to .env.")
                     self._openrouter = OpenAI(api_key=key, base_url=url, max_retries=0)
                 return self._openrouter
-            if backend == "openai_direct":
-                if self._openai_direct is None:
-                    key = os.environ.get("OPENAI_API_KEY")
-                    if not key:
-                        raise RuntimeError(f"OPENAI_API_KEY not set (needed for {model}). Add it to .env.")
-                    self._openai_direct = OpenAI(api_key=key, base_url="https://api.openai.com/v1", max_retries=0)
-                return self._openai_direct
-            if backend == "anthropic":
-                if self._anthropic is None:
-                    key = os.environ.get("ANTHROPIC_API_KEY")
-                    if not key:
-                        raise RuntimeError(f"ANTHROPIC_API_KEY not set (needed for {model}). Add it to .env.")
-                    self._anthropic = AnthropicAdapter(api_key=key)
-                return self._anthropic
             # default: tensorix
             if self._tensorix is None:
                 key = os.environ.get("TENSORIX_API_KEY")
@@ -478,13 +391,13 @@ class ClientPool:
             return self._tensorix
 
 
-# ----------------------------- Tensorix client ---------------------------- #
+# ----------------------------- client pool --------------------------------- #
 
 def make_client_pool() -> ClientPool:
-    """Create the multi-backend pool. Validates Tensorix env vars eagerly because
-    most runs go through Tensorix; other backends are validated lazily on first use.
-    If Tensorix is not configured, prints a warning but continues (the user may
-    be running only anchor models or OpenRouter-hosted models)."""
+    """Create the two-backend pool (Tensorix + OpenRouter). Validates Tensorix
+    env vars eagerly because most open-model runs go through Tensorix; OpenRouter
+    is validated lazily on first use. Anchor models (GPT-5.5, Claude Opus) and all
+    VLM models are routed through OpenRouter."""
     if not os.environ.get("TENSORIX_API_KEY") or not os.environ.get("TENSORIX_BASE_URL"):
         print("WARNING: TENSORIX_API_KEY or TENSORIX_BASE_URL not set.", file=sys.stderr)
         print("         Tensorix-hosted models will fail. See .env.example.", file=sys.stderr)
@@ -502,27 +415,55 @@ _INTERESTING_HEADERS = [
 def _create_with_headers(client, create_kwargs: dict) -> tuple:
     """Call chat.completions.create, capturing response headers when possible.
 
-    Returns (response, headers_dict). For backends that don't support
-    with_raw_response (e.g. AnthropicAdapter), headers_dict may be empty.
+    Returns (response, headers_dict).
     """
     headers: dict[str, str] = {}
-    try:
-        raw = client.chat.completions.with_raw_response.create(**create_kwargs)
-        for h in _INTERESTING_HEADERS:
-            v = raw.headers.get(h)
-            if v:
-                headers[h] = v
-        # Capture the actual model served (may differ from requested).
-        resp = raw.parse()
-        if hasattr(resp, 'model') and resp.model:
-            headers["served_model"] = resp.model
-        return resp, headers
-    except AttributeError:
-        # Client doesn't support with_raw_response (e.g. AnthropicAdapter).
-        resp = client.chat.completions.create(**create_kwargs)
-        if hasattr(resp, '_headers'):
-            headers = resp._headers
-        return resp, headers
+    raw = client.chat.completions.with_raw_response.create(**create_kwargs)
+    for h in _INTERESTING_HEADERS:
+        v = raw.headers.get(h)
+        if v:
+            headers[h] = v
+    resp = raw.parse()
+    if hasattr(resp, 'model') and resp.model:
+        headers["served_model"] = resp.model
+    return resp, headers
+
+
+def _create_with_retry(client, create_kwargs: dict) -> tuple:
+    """Wrap _create_with_headers with retries for transient HTTP errors.
+
+    Retries up to MAX_TRANSIENT_RETRIES times on 429/502/503/connection errors
+    with exponential backoff (2s, 4s). Fatal errors (402, 404) and timeouts
+    propagate immediately without consuming retry budget.
+
+    Returns (response, headers, retry_log) where retry_log is a list of
+    transient failures that were retried before the final attempt.
+
+    Wall-clock impact: transient errors return quickly (seconds, not minutes),
+    so retries typically add <10s total. The per-call SDK timeout still bounds
+    each individual attempt.
+    """
+    retry_log: list[dict] = []
+    last_err: Exception | None = None
+    for attempt in range(1 + MAX_TRANSIENT_RETRIES):
+        try:
+            resp, headers = _create_with_headers(client, create_kwargs)
+            return resp, headers, retry_log
+        except Exception as e:
+            last_err = e
+            if _is_timeout_error(e) or _is_fatal_api_error(e):
+                raise
+            if _is_transient_error(e) and attempt < MAX_TRANSIENT_RETRIES:
+                wait = TRANSIENT_BACKOFF_BASE * (2 ** attempt)
+                retry_log.append({
+                    "attempt": attempt + 1,
+                    "error": str(e)[:200],
+                    "wait_s": round(wait, 1),
+                })
+                time.sleep(wait)
+                continue
+            raise
+    raise last_err  # unreachable, but keeps type checkers happy
 
 
 def call_model(client, model: str, system_prompt: str, user_prompt: str, temperature: float) -> tuple[str, dict]:
@@ -530,6 +471,9 @@ def call_model(client, model: str, system_prompt: str, user_prompt: str, tempera
     On a timeout we skip the fallback — see RUN_TIMEOUT_S note above. Net wall clock
     per call is bounded at ~RUN_TIMEOUT_S (timeout fires fast) or ~2 × RUN_TIMEOUT_S
     (json_object refused for non-timeout reasons, then plain-text retry).
+
+    Transient HTTP errors (429, 502, 503) are retried up to MAX_TRANSIENT_RETRIES
+    times with exponential backoff before propagating.
 
     Captures provider response headers (x-provider, processing time, rate limits)
     when available, stored in metadata["response_headers"].
@@ -553,10 +497,12 @@ def call_model(client, model: str, system_prompt: str, user_prompt: str, tempera
     try:
         t0 = time.time()
         with hard_timeout(RUN_TIMEOUT_S * 1.2):
-            resp, headers = _create_with_headers(client, create_kwargs)
+            resp, headers, retries = _create_with_retry(client, create_kwargs)
         elapsed = time.time() - t0
         if headers:
             metadata["response_headers"] = headers
+        if retries:
+            metadata["transient_retries"] = retries
         content = resp.choices[0].message.content
         if content is not None and content.strip():
             metadata["attempts"].append({"mode": "json_object", "elapsed_s": round(elapsed, 2), "ok": True})
@@ -581,10 +527,12 @@ def call_model(client, model: str, system_prompt: str, user_prompt: str, tempera
 
     t0 = time.time()
     with hard_timeout(RUN_TIMEOUT_S * 1.2):
-        resp, headers = _create_with_headers(client, create_kwargs_plain)
+        resp, headers, retries = _create_with_retry(client, create_kwargs_plain)
     elapsed = time.time() - t0
     if headers:
         metadata["response_headers"] = headers
+    if retries:
+        metadata.setdefault("transient_retries", []).extend(retries)
     metadata["attempts"].append({"mode": "plain", "elapsed_s": round(elapsed, 2), "ok": True})
     return resp.choices[0].message.content, metadata
 
@@ -977,6 +925,9 @@ def call_vlm(client, model: str, system_prompt: str, user_text: str, image_paths
     either a single Path (single-image, e.g. dims_vlm) or a list of Paths (multi-image,
     e.g. docs_vlm with one image per PDF page). Same retry-on-no-JSON semantics as call_model.
 
+    Transient HTTP errors (429, 502, 503) are retried up to MAX_TRANSIENT_RETRIES
+    times with exponential backoff before propagating.
+
     Captures provider response headers when available."""
     metadata: dict = {"attempts": []}
     if isinstance(image_paths, Path):
@@ -1002,10 +953,12 @@ def call_vlm(client, model: str, system_prompt: str, user_text: str, image_paths
     try:
         t0 = time.time()
         with hard_timeout(RUN_TIMEOUT_S * 1.2):
-            resp, headers = _create_with_headers(client, create_kwargs)
+            resp, headers, retries = _create_with_retry(client, create_kwargs)
         elapsed = time.time() - t0
         if headers:
             metadata["response_headers"] = headers
+        if retries:
+            metadata["transient_retries"] = retries
         content = resp.choices[0].message.content
         if content is not None and content.strip():
             metadata["attempts"].append({"mode": "json_object", "elapsed_s": round(elapsed, 2), "ok": True})
@@ -1030,10 +983,12 @@ def call_vlm(client, model: str, system_prompt: str, user_text: str, image_paths
 
     t0 = time.time()
     with hard_timeout(RUN_TIMEOUT_S * 1.2):
-        resp, headers = _create_with_headers(client, create_kwargs_plain)
+        resp, headers, retries = _create_with_retry(client, create_kwargs_plain)
     elapsed = time.time() - t0
     if headers:
         metadata["response_headers"] = headers
+    if retries:
+        metadata.setdefault("transient_retries", []).extend(retries)
     metadata["attempts"].append({"mode": "plain", "elapsed_s": round(elapsed, 2), "ok": True})
     return resp.choices[0].message.content, metadata
 
@@ -1586,7 +1541,8 @@ def run_schedule_write(client: OpenAI, model: str, temperature: float) -> dict:
 # ----------------------------- aggregator --------------------------------- #
 
 _INFRA_FAILURE_PATTERNS = [
-    "402", "404", "429", "timed out", "timeout", "circuit-breaker",
+    "402", "404", "429", "502", "503", "520",
+    "timed out", "timeout", "circuit-breaker",
     "connection", "rate limit", "credit", "payment", "skipped:",
 ]
 
@@ -1891,7 +1847,7 @@ def main() -> None:
         workflows = ["compliance", "dims", "docs", "schedule_read", "schedule_write"]
         # dims_vlm is the primary vision workflow — include if OpenRouter or
         # any VLM-capable backend is configured.
-        if os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
+        if os.environ.get("OPENROUTER_API_KEY"):
             dims_idx = workflows.index("dims")
             workflows.insert(dims_idx + 1, "dims_vlm")
     else:
@@ -1916,9 +1872,7 @@ def main() -> None:
     if os.environ.get('OPENROUTER_API_KEY'):
         print(f"OpenRouter:   {os.environ.get('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')}")
     else:
-        print("OpenRouter:   (not configured — OPENROUTER_API_KEY missing)")
-    print(f"OpenAI:       {'configured' if os.environ.get('OPENAI_API_KEY') else '(not configured — OPENAI_API_KEY missing)'}")
-    print(f"Anthropic:    {'configured' if os.environ.get('ANTHROPIC_API_KEY') else '(not configured — ANTHROPIC_API_KEY missing)'}")
+        print("OpenRouter:   (not configured — OPENROUTER_API_KEY missing; VLMs + anchors will fail)")
     print()
 
     pool = make_client_pool()

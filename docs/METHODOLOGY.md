@@ -331,4 +331,5 @@ This benchmark is in its second iteration (v0.5). Known areas for future extensi
 - **Infrastructure failure separation.** Failed runs are categorized as infra vs capability, with separate score sets (see section 6.1).
 - **Bootstrap confidence intervals.** 95% CIs on all metrics (see section 6.2).
 - **Closed-model anchor points.** GPT-5.5 and Claude Opus 4.6 as reference ceilings.
-- **Multi-backend support.** Tensorix, OpenRouter, OpenAI (direct), and Anthropic backends.
+- **Multi-backend support.** Tensorix (open models) + OpenRouter (VLMs + closed-model anchors).
+- **Automatic retry with backoff.** Transient HTTP errors (429, 502, 503) are retried up to 2 times with exponential backoff; fatal errors (402, 404) fail immediately.

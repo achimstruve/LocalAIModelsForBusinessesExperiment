@@ -36,8 +36,8 @@ Coverage: text/data, image/vision, PDF (native + scanned OCR), spreadsheet read,
 
 | Model | Provider | Purpose |
 |---|---|---|
-| `gpt-5.5-2026-04-23` | OpenAI (direct) | GPT-5.5 — lets readers interpret open-model scores as "X% of GPT-5.5" |
-| `claude-opus-4-6` | Anthropic | Claude Opus 4.6 — second closed-model reference point |
+| `openai/gpt-5.5` | OpenRouter | GPT-5.5 — lets readers interpret open-model scores as "X% of GPT-5.5" |
+| `anthropic/claude-opus-4.6` | OpenRouter | Claude Opus 4.6 — second closed-model reference point |
 
 **Open-model text ladder** (compliance, dims, docs, schedule_read, schedule_write):
 
@@ -75,7 +75,7 @@ Coverage: text/data, image/vision, PDF (native + scanned OCR), spreadsheet read,
 
 The key question: if a smaller model still hits acceptable precision/recall, can we recommend a cheaper hardware tier?
 
-**Providers:** Tensorix (open models), OpenRouter (VLM routing), OpenAI (GPT-5.5 direct), Anthropic (Claude Opus 4.6).
+**Providers:** Tensorix (open models), OpenRouter (VLMs + closed-model anchors).
 
 ## Setup
 
@@ -98,7 +98,7 @@ The key question: if a smaller model still hits acceptable precision/recall, can
    cp .env.example .env
    ```
 
-   You need at minimum a [Tensorix](https://tensorix.ai) API key for the open-model ladder. Additional optional keys: OpenRouter (VLM workflows), OpenAI (GPT-5.5 anchor), Anthropic (Opus 4.6 anchor). See `.env.example` for all options.
+   You need a [Tensorix](https://tensorix.ai) API key for the open-model text ladder and an [OpenRouter](https://openrouter.ai) API key for VLM workflows and closed-model anchors (GPT-5.5, Claude Opus 4.6). See `.env.example`.
 
 4. **Verify input data** is present under `data/` (see [Project structure](#project-structure) below).
 
@@ -246,13 +246,14 @@ For full scoring rubrics, ground-truth construction methodology, and known limit
 
 ## Status and limitations
 
-This is the **v0.5 iteration** of the benchmark. Key improvements from v0.4:
+This is the **v0.6-dev iteration** of the benchmark. Key improvements since v0.4:
 
 - **Infrastructure vs capability failure separation** -- provider outages no longer silently contaminate model scores.
 - **Bootstrap 95% CIs** on all metrics -- uncertainty is visible, not hidden behind point estimates.
 - **Closed-model anchor points** (GPT-5.5, Claude Opus 4.6) -- readers can interpret open-model scores relative to frontier models.
 - **Provider response header capture** -- `x-provider`, `served_model`, and rate-limit headers are logged for traceability.
-- **Multi-backend support** -- Tensorix, OpenRouter, OpenAI (direct), Anthropic.
+- **Multi-backend support** -- Tensorix (open models) + OpenRouter (VLMs + closed-model anchors).
+- **Automatic retry with backoff** -- transient HTTP errors (429, 502, 503) are retried up to 2 times; fatal errors (402, 404) fail immediately.
 
 Things to be upfront about:
 

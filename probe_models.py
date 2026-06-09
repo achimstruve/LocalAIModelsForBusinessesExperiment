@@ -163,12 +163,6 @@ def main() -> None:
         os.environ.get("OPENROUTER_API_KEY"),
         keywords,
     )
-    probe(
-        "OpenAI (direct)",
-        "https://api.openai.com/v1",
-        os.environ.get("OPENAI_API_KEY"),
-        keywords,
-    )
 
     if "--check-credits" in flags:
         check_openrouter_credits()
